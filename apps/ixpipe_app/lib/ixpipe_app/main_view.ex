@@ -10,7 +10,7 @@ defmodule IxpipeApp.MainView do
   import IxpipeApp.Components
 
   alias Explorer.DataFrame
-  alias IxpipeCore.{Config, Edit, Spec, Tools}
+  alias IxpipeCore.{Config, Connections, Edit, Spec, Tools}
 
   @node_width 200
   @port_y 24
@@ -18,8 +18,9 @@ defmodule IxpipeApp.MainView do
   @zooms [50, 75, 100, 125, 150]
   @history 100
   @preview_rows 50
-  @palette ~w(input_csv input_excel input_parquet select filter formula sort join union
-              summarize sample unique output_csv output_excel output_parquet)
+  @palette ~w(input_csv input_excel input_parquet input_sqlite input_postgres select filter
+              formula sort join union summarize sample unique output_csv output_excel
+              output_parquet output_sqlite)
 
   def mount(args) do
     dir = Keyword.fetch!(args, :dir)
@@ -173,7 +174,8 @@ defmodule IxpipeApp.MainView do
           preview={@node && @previews[output_key(@node, @output)]} />
         </div>
         <div class="w-px h-full bg-border" />
-        <.properties node={@node} drafts={@drafts} errors={@errors} formula_rows={@formula_rows} />
+        <.properties node={@node} drafts={@drafts} errors={@errors} formula_rows={@formula_rows}
+          dir={@dir} />
       </div>
       <.toast :if={@toast} message={@toast} />
     </div>
@@ -305,7 +307,7 @@ defmodule IxpipeApp.MainView do
   def handle_event("run", _values, assigns) do
     result =
       with {:ok, spec} <- Spec.validate(assigns.spec),
-           {:ok, results} <- IxpipeCore.run(spec) do
+           {:ok, results} <- IxpipeCore.run(with_home(spec, assigns.dir)) do
         rows = Map.new(results, fn {id, df} -> {id, DataFrame.n_rows(df)} end)
         {:ok, rows, Map.new(results, fn {id, df} -> {id, preview(df)} end)}
       end
@@ -387,6 +389,11 @@ defmodule IxpipeApp.MainView do
         previews: %{}
     }
   end
+
+  # Database tools find saved connections in the workflows folder; it is
+  # given for the run only, never saved into the workflow.
+  defp with_home(spec, dir),
+    do: %{spec | nodes: Enum.map(spec.nodes, &%{&1 | config: Map.put(&1.config, "_home", dir)})}
 
   defp restore(assigns, spec) do
     selected = if Enum.any?(spec.nodes, &(&1.id == assigns.selected)), do: assigns.selected
@@ -563,6 +570,7 @@ defmodule IxpipeApp.MainView do
   attr(:drafts, :map, required: true)
   attr(:errors, :map, required: true)
   attr(:formula_rows, :integer, required: true)
+  attr(:dir, :string, required: true)
 
   defp properties(assigns) do
     ~H"""
@@ -575,7 +583,7 @@ defmodule IxpipeApp.MainView do
       <.caption :if={@node && @node.tool.fields() == []}>This tool has no settings.</.caption>
       <form :if={@node} phx-change="config" aria-label="Settings" class="flex-col gap-3">
         <.field :for={field <- @node.tool.fields()} field={field} node={@node} drafts={@drafts}
-          error={@errors[field.key]} formula_rows={@formula_rows} />
+          error={@errors[field.key]} formula_rows={@formula_rows} dir={@dir} />
       </form>
     </aside>
     """
@@ -586,6 +594,35 @@ defmodule IxpipeApp.MainView do
   attr(:drafts, :map, required: true)
   attr(:error, :string, default: nil)
   attr(:formula_rows, :integer, required: true)
+  attr(:dir, :string, default: nil)
+
+  # A database tool's saved connection: the saved connections of its kind,
+  # as choices, from connections.yaml in the workflows folder.
+  defp field(%{field: %{key: "connection"}} = assigns) do
+    kind = if Tools.name(assigns.node.tool) =~ "postgres", do: "postgres", else: "sqlite"
+    names = for %{"type" => ^kind, "name" => name} <- Connections.list(assigns.dir), do: name
+    assigns = Map.merge(assigns, %{names: names, kind: kind})
+
+    ~H"""
+    <div class="flex-col gap-1">
+      <div class="flex-row items-center gap-2">
+        <.label>{@field.label}</.label>
+        <.caption :if={@field[:optional]}>Optional</.caption>
+      </div>
+      <div :if={@names != []} class="flex-row flex-wrap gap-1">
+        <.button :for={name <- @names} size={:sm} phx-click="choose" phx-value-key="connection"
+          phx-value-value={name} aria-label={"Connection #{name}"}
+          class={if @node.config["connection"] == name, do: "border-primary bg-primary/12", else: ""}>
+          {name}
+        </.button>
+      </div>
+      <.caption :if={@names == []}>
+        No saved connections yet. Add a {@kind} connection to connections.yaml in {@dir}.
+      </.caption>
+      <.caption :if={@error} class="text-danger">{@error}</.caption>
+    </div>
+    """
+  end
 
   defp field(%{field: %{type: :bool}} = assigns) do
     ~H"""
@@ -720,7 +757,10 @@ defmodule IxpipeApp.MainView do
     "input_excel" => "Input Excel",
     "output_excel" => "Output Excel",
     "input_parquet" => "Input Parquet",
-    "output_parquet" => "Output Parquet"
+    "output_parquet" => "Output Parquet",
+    "input_sqlite" => "Input SQLite",
+    "output_sqlite" => "Output SQLite",
+    "input_postgres" => "Input Postgres"
   }
   defp tool_label(tool), do: Map.get_lazy(@labels, tool, fn -> String.capitalize(tool) end)
 
