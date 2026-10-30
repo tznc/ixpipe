@@ -11,6 +11,9 @@ defmodule IxpipeCore.Tools.Join do
   def inputs, do: ["left", "right"]
 
   @impl true
+  def required_config, do: ["on"]
+
+  @impl true
   def run(%{"left" => left, "right" => right}, %{"on" => on} = config) do
     how = Map.fetch!(@how, config["how"] || "inner")
     Explorer.DataFrame.join(left, right, on: on, how: how)

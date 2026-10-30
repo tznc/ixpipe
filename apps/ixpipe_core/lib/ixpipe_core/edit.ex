@@ -15,12 +15,15 @@ defmodule IxpipeCore.Edit do
     %{spec | nodes: spec.nodes ++ [node]}
   end
 
-  @doc "Moves node `id` by `dx`, `dy`. A node without a position starts at the origin."
+  @doc """
+  Moves node `id` by `dx`, `dy`, no further left or up than the canvas origin
+  (where a node would be out of reach). A node without a position starts there.
+  """
   @spec move_node(Spec.t(), String.t(), number(), number()) :: Spec.t()
   def move_node(spec, id, dx, dy) do
     update(spec, id, fn node ->
       %{"x" => x, "y" => y} = node.position || %{"x" => 0, "y" => 0}
-      %{node | position: %{"x" => x + dx, "y" => y + dy}}
+      %{node | position: %{"x" => max(x + dx, 0), "y" => max(y + dy, 0)}}
     end)
   end
 

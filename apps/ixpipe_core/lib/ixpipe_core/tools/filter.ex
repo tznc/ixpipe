@@ -9,6 +9,9 @@ defmodule IxpipeCore.Tools.Filter do
   def inputs, do: ["in"]
 
   @impl true
+  def required_config, do: ["expr"]
+
+  @impl true
   def run(%{"in" => df}, %{"expr" => expr}),
     do: Explorer.DataFrame.sql(df, "SELECT * FROM df WHERE (#{expr})")
 end

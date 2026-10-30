@@ -6,5 +6,8 @@ defmodule IxpipeCore.Tools.Select do
   def inputs, do: ["in"]
 
   @impl true
+  def required_config, do: ["columns"]
+
+  @impl true
   def run(%{"in" => df}, %{"columns" => columns}), do: Explorer.DataFrame.select(df, columns)
 end

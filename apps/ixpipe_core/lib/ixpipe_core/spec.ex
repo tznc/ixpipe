@@ -55,7 +55,8 @@ defmodule IxpipeCore.Spec do
   @spec validate(t()) :: {:ok, t()} | {:error, term()}
   def validate(%__MODULE__{nodes: nodes} = spec) do
     with :ok <- check_inputs(nodes),
-         {:ok, sorted} <- topo_sort(nodes) do
+         {:ok, sorted} <- topo_sort(nodes),
+         :ok <- check_config(sorted) do
       {:ok, %{spec | nodes: sorted}}
     end
   end
@@ -103,6 +104,10 @@ defmodule IxpipeCore.Spec do
   def format_error({:unknown_tool, id, tool}), do: "#{id}: unknown tool #{inspect(tool)}"
   def format_error({:duplicate_id, id}), do: "duplicate node id #{id}"
   def format_error({:unknown_input, id, from}), do: "#{id}: input #{from} is not a node"
+
+  def format_error({:missing_config, id, keys}),
+    do: "#{id}: needs config #{Enum.join(keys, ", ")}"
+
   def format_error({:cycle, ids}), do: "cycle: " <> Enum.join(ids, " -> ")
 
   def format_error({:bad_ports, id, expected: expected, got: got}),
@@ -163,6 +168,15 @@ defmodule IxpipeCore.Spec do
 
         true ->
           nil
+      end
+    end)
+  end
+
+  defp check_config(nodes) do
+    Enum.find_value(nodes, :ok, fn node ->
+      case Enum.reject(node.tool.required_config(), &Map.has_key?(node.config, &1)) do
+        [] -> nil
+        missing -> {:error, {:missing_config, node.id, missing}}
       end
     end)
   end

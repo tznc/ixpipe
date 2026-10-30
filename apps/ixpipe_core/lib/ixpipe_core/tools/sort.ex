@@ -6,6 +6,9 @@ defmodule IxpipeCore.Tools.Sort do
   def inputs, do: ["in"]
 
   @impl true
+  def required_config, do: ["by"]
+
+  @impl true
   def run(%{"in" => df}, %{"by" => by} = config) do
     dir = if config["desc"], do: :desc, else: :asc
     Explorer.DataFrame.sort_with(df, fn ldf -> Enum.map(by, &{dir, ldf[&1]}) end)

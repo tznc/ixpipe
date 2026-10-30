@@ -77,6 +77,11 @@ defmodule IxpipeCore.DraftTest do
              ]
     end
 
+    test "move_node/4 keeps nodes on the canvas: x and y never go below 0", %{spec: spec} do
+      spec = Edit.move_node(spec, "orders", -500, -45)
+      assert hd(spec.nodes).position == %{"x" => 0, "y" => 15}
+    end
+
     test "connect/4 sets an input port, replacing what was there", %{spec: spec} do
       spec =
         spec
@@ -90,5 +95,13 @@ defmodule IxpipeCore.DraftTest do
       spec = Edit.remove_node(spec, "orders")
       assert [%{id: "sorted", inputs: %{}}] = spec.nodes
     end
+  end
+
+  test "validate/1 names the config a node is missing" do
+    {:ok, draft} =
+      Spec.decode("nodes: [{id: in, tool: input_csv}, {id: s, tool: sort, inputs: {in: in}}]")
+
+    assert {:error, {:missing_config, "in", ["path"]}} = Spec.validate(draft)
+    assert Spec.format_error({:missing_config, "in", ["path"]}) == "in: needs config path"
   end
 end

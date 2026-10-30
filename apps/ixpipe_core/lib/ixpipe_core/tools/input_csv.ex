@@ -6,5 +6,8 @@ defmodule IxpipeCore.Tools.InputCsv do
   def inputs, do: []
 
   @impl true
+  def required_config, do: ["path"]
+
+  @impl true
   def run(_inputs, %{"path" => path}), do: Explorer.DataFrame.from_csv!(path)
 end

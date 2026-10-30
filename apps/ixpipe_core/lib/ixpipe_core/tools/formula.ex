@@ -12,6 +12,9 @@ defmodule IxpipeCore.Tools.Formula do
   def inputs, do: ["in"]
 
   @impl true
+  def required_config, do: ["formulas"]
+
+  @impl true
   def run(%{"in" => df}, %{"formulas" => formulas}) do
     Enum.reduce(formulas, df, fn %{"as" => as, "expr" => expr}, df ->
       column = "(#{expr}) AS #{quote_name(as)}"

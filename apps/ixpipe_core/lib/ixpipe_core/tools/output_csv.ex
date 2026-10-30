@@ -6,6 +6,9 @@ defmodule IxpipeCore.Tools.OutputCsv do
   def inputs, do: ["in"]
 
   @impl true
+  def required_config, do: ["path"]
+
+  @impl true
   def run(%{"in" => df}, %{"path" => path}) do
     Explorer.DataFrame.to_csv!(df, path)
     df

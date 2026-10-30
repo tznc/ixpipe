@@ -7,5 +7,7 @@ defmodule IxpipeCore.Tool do
   alias Explorer.DataFrame
 
   @callback inputs() :: [String.t()]
+  @doc "Config keys `run/2` cannot do without."
+  @callback required_config() :: [String.t()]
   @callback run(%{String.t() => DataFrame.t()}, config :: map()) :: DataFrame.t()
 end

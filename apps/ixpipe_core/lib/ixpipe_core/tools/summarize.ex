@@ -20,6 +20,9 @@ defmodule IxpipeCore.Tools.Summarize do
   def inputs, do: ["in"]
 
   @impl true
+  def required_config, do: ["group_by", "aggregates"]
+
+  @impl true
   def run(%{"in" => df}, %{"group_by" => group_by, "aggregates" => aggregates}) do
     df
     |> DataFrame.group_by(group_by)
