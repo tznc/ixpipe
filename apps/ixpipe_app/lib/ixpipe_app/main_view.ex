@@ -171,7 +171,7 @@ defmodule IxpipeApp.MainView do
         <% end %>
       </.ribbon>
       <div class={"relative flex-1 " <> if(@phone, do: "flex-col", else: "flex-row")}>
-        <div :if={!@phone || @pane == "canvas"} class="flex-col flex-1">
+        <div :if={!@phone || @pane == "canvas"} class="flex-col flex-1 min-w-0">
         <div class="relative flex-1 overflow-hidden bg-canvas">
           <.empty_state :if={@spec.nodes == []} title="This workflow is empty">
             Add a tool from a ribbon tab above.
@@ -195,7 +195,7 @@ defmodule IxpipeApp.MainView do
               <.button :if={!compact?(@zoom)} variant={:danger} size={:sm} phx-click="remove"
                 phx-value-id={node.id} aria-label={"Remove #{node.id}"}>Remove</.button>
             </div>
-            <div class="flex-row items-center gap-2">
+            <div class="flex-row flex-wrap items-center gap-2">
               <.caption>{tool_label(Tools.name(node.tool))}</.caption>
               <.status_badge :if={@rows[node.id]} tone={:success}>{plural(@rows[node.id], "row")}</.status_badge>
               <.run_badge run={@run} id={node.id} />
@@ -439,7 +439,7 @@ defmodule IxpipeApp.MainView do
              rows: rows,
              previews: previews,
              pane: pane,
-             run: %{nodes: run.nodes, messages: run.messages}
+             run: %{nodes: run.nodes, messages: canvas_order(run.messages, assigns.spec)}
          }}
 
       {:error, reason} ->
@@ -449,6 +449,13 @@ defmodule IxpipeApp.MainView do
   end
 
   def handle_info(:dismiss_toast, assigns), do: {:noreply, %{assigns | toast: nil}}
+
+  # A run reports in the order it ran; Messages lists tools as the workflow
+  # does (sorting is stable, so each tool's messages keep their order).
+  defp canvas_order(messages, spec) do
+    index = spec.nodes |> Enum.with_index() |> Map.new(fn {node, i} -> {node.id, i} end)
+    Enum.sort_by(messages, &index[&1.node])
+  end
 
   # The run callout: where it failed and why, how many warnings, or success.
   defp run_status(%IxpipeCore.Run{status: :failed} = run, _selected) do
@@ -819,11 +826,11 @@ defmodule IxpipeApp.MainView do
             <.label>{node}</.label>
             <.caption>{@tools[node]}</.caption>
           </div>
-          <.button :for={m <- group} variant={:quiet} size={touch(@phone, :sm)} class="w-full items-start"
-            phx-click="select" phx-value-id={m.node} aria-label={"#{m.node}: #{m.text}"} title={m.detail}>
+          <.list_item :for={m <- group} phx-click="select" phx-value-id={m.node}
+            aria-label={"#{m.node}: #{m.text}"} title={m.detail}>
             <.status_badge tone={level_tone(m.level)}>{level_word(m.level)}</.status_badge>
-            <.body class="flex-1">{m.text}</.body>
-          </.button>
+            <.body class="flex-1 min-w-0">{m.text}</.body>
+          </.list_item>
         </div>
       </div>
     </section>
@@ -857,7 +864,7 @@ defmodule IxpipeApp.MainView do
 
   defp properties(assigns) do
     ~H"""
-    <aside class={"flex-col gap-6 p-4 overflow-y-scroll " <> if(@phone, do: "flex-1 w-full", else: "w-[320px]")}
+    <aside class={"flex-col gap-6 p-4 overflow-y-scroll " <> if(@phone, do: "flex-1 w-full", else: "w-[320px] shrink-0")}
       aria-label="Configuration">
       <.empty_state :if={!@node} title="Nothing selected">Select a tool to configure it.</.empty_state>
       <div :if={@node} class="flex-col gap-1">

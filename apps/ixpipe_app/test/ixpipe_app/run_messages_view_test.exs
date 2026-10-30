@@ -88,7 +88,9 @@ defmodule IxpipeApp.RunMessagesViewTest do
 
     text = Test.text(w)
     assert UI.find(w, "Messages") != []
-    assert text =~ ~r/orders.*bad.*after.*fine/s
+    [panel] = UI.find(w, "Messages")
+    # Tools in the workflow's order, not the order they ran in.
+    assert text(panel) =~ ~r/orders.*bad.*after.*fine/s
     assert text =~ "Didn't run because bad failed."
     assert text =~ "2 rows in"
 
@@ -103,6 +105,20 @@ defmodule IxpipeApp.RunMessagesViewTest do
     Test.click(w, label)
     [config] = UI.find(w, "Configuration")
     assert text(config) =~ "bad"
+  end
+
+  test "Messages lists tools in the workflow's order, not the order they ran in", ctx do
+    File.write!(Path.join(ctx.dir, "two.yaml"), """
+    nodes:
+      - {id: zeta, tool: input_csv, position: {x: 40, y: 40}, config: {path: #{@fixtures}/orders.csv}}
+      - {id: alpha, tool: input_csv, position: {x: 40, y: 240}, config: {path: #{@fixtures}/orders.csv}}
+    """)
+
+    w = start(ctx, "two.yaml")
+    Test.click(w, "Run workflow")
+    Test.click(w, "Messages tab")
+    [panel] = UI.find(w, "Messages")
+    assert text(panel) =~ ~r/zeta.*alpha/s
   end
 
   test "Messages before a run has an empty state", ctx do

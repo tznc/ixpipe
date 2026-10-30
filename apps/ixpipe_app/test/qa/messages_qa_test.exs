@@ -16,21 +16,21 @@ defmodule IxpipeApp.QA.MessagesTest do
     File.write!(Path.join(qa.home, "partial.yaml"), """
     name: partial
     nodes:
-      - {id: orders, tool: input_csv, position: {x: 20, y: 30}, config: {path: #{@fixtures}/orders.csv}}
-      - {id: customers, tool: input_csv, position: {x: 20, y: 230}, config: {path: #{@fixtures}/customers.csv}}
+      - {id: orders, tool: input_csv, position: {x: 20, y: 10}, config: {path: #{@fixtures}/orders.csv}}
+      - {id: customers, tool: input_csv, position: {x: 20, y: 150}, config: {path: #{@fixtures}/customers.csv}}
       - id: joined
         tool: join
-        position: {x: 260, y: 130}
+        position: {x: 240, y: 80}
         inputs: {left: orders, right: customers}
         config: {on: [customer]}
       - id: totals
         tool: summarize
-        position: {x: 500, y: 130}
+        position: {x: 460, y: 80}
         inputs: {in: joined.joined}
         config: {group_by: [name], aggregates: [{column: amount, op: sum, as: total}]}
       - id: taxed
         tool: formula
-        position: {x: 500, y: 330}
+        position: {x: 670, y: 10}
         inputs: {in: orders}
         config: {formulas: [{as: tax, expr: "amount * NULL"}]}
     """)
