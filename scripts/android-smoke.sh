@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
-# Installs the ixpipe APK on a running emulator, checks the embedded BEAM
-# boots and renders, taps "New workflow" on the home screen and checks the
-# canvas opens. Saves screenshots and logcat to the output directory.
+# Installs the ixpipe APK on a running emulator and proves the engine runs
+# there: the embedded BEAM boots and renders, the canvas opens, and a
+# workflow that reads a CSV, sorts it and writes it to CSV (Explorer) and
+# SQLite (ixpipe_sqlite) runs from the Run workflow button and leaves the
+# right files behind. Fails if any NIF is missing from the APK. Saves
+# screenshots and logcat to the output directory.
 # Modelled on baguette's scripts/android-smoke.sh.
 #
 #   scripts/android-smoke.sh ixpipe.apk [OUT_DIR]
@@ -13,6 +16,8 @@ PKG=${PKG:-dev.baguette.ixpipe}
 mkdir -p "$OUT"
 ADB_BIN=$(command -v adb)
 adb() { timeout 90 "$ADB_BIN" "$@"; }
+# as_app <command>: a shell command as the app, in its data directory.
+as_app() { adb shell "run-as $PKG sh -c '$1'"; }
 
 timeout 300 "$ADB_BIN" wait-for-device
 adb shell settings put global hide_error_dialogs 1 || true
@@ -26,24 +31,29 @@ trap 'adb exec-out screencap -p >"$OUT/final.png" || true; kill "$logcat" 2>/dev
 adb shell am start -n "$PKG/.MainActivity"
 
 failures=0
+fail() {
+  echo "FAIL: $1"
+  failures=$((failures + 1))
+}
+# wait_for <regex> <seconds> [from line]: waits for a logcat line, counting
+# only lines after `from` (so a relaunch doesn't match the first launch).
 wait_for() {
-  local deadline=$((SECONDS + $2))
+  local deadline=$((SECONDS + $2)) from=${3:-0}
   while ((SECONDS < deadline)); do
-    if grep -Eq "$1" "$OUT/logcat.txt"; then return 0; fi
+    if tail -n +$((from + 1)) "$OUT/logcat.txt" | grep -Eq "$1"; then return 0; fi
     sleep 1
   done
-  echo "FAIL: no logcat line matching /$1/ within $2 s"
-  failures=$((failures + 1))
+  fail "no logcat line matching /$1/ within $2 s"
   return 1
 }
+lines() { wc -l <"$OUT/logcat.txt"; }
 shot() { adb exec-out screencap -p >"$OUT/$1.png"; }
 # tap <label>: taps the centre the host logged for an aria-labelled control.
 tap() {
   local at
   at=$(grep -Eo "baguette: bounds $1 [0-9]+ [0-9]+" "$OUT/logcat.txt" | tail -1 | grep -Eo '[0-9]+ [0-9]+$')
   if [[ -z $at ]]; then
-    echo "FAIL: no bounds logged for $1"
-    failures=$((failures + 1))
+    fail "no bounds logged for $1"
     return 1
   fi
   echo "tap $1 at $at"
@@ -62,19 +72,68 @@ wait_for 'baguette: bounds Run workflow [0-9]+ [0-9]+' 30
 sleep 2
 shot canvas
 
-# Known gap: baguette ships only its own NIF as a jniLib, so Explorer (and
-# exqlite) have no Android build in the APK. Report it; don't fail on it yet.
-if grep -Eq 'baguette: no lib.* in the app|on_load function for module .*(Explorer|Exqlite)' "$OUT/logcat.txt"; then
-  echo "WARN: third-party NIFs are missing on Android (Explorer/exqlite); running a workflow will fail"
+# Every NIF in the release must have its Android build in the APK.
+if grep -E 'baguette: no lib.* in the app|on_load function for module|failed to load NIF' "$OUT/logcat.txt"; then
+  fail "a NIF is missing from the APK or did not load"
+fi
+
+# The workflows home the app made (~/ixpipe; HOME is the release's tmp when
+# Android sets none).
+home=$(as_app 'find "$PWD" -type d -name ixpipe -not -path "*/lib/*" 2>/dev/null' | tr -d '\r' | head -1)
+echo "workflows home: ${home:-none}"
+if [[ -z $home ]]; then
+  fail "the app made no workflows home"
+else
+  as_app "cat > $home/orders.csv" <<'CSV'
+id,customer_id,amount
+1,10,50
+2,20,5
+3,10,30
+4,30,12
+CSV
+  as_app "cat > $home/smoke.yaml" <<YAML
+nodes:
+  - {id: orders, tool: input_csv, config: {path: $home/orders.csv}, position: {x: 40, y: 40}}
+  - {id: sorted, tool: sort, inputs: {in: orders}, config: {by: [amount], desc: true}, position: {x: 320, y: 40}}
+  - {id: to_csv, tool: output_csv, inputs: {in: sorted}, config: {path: $home/sorted.csv}, position: {x: 600, y: 40}}
+  - {id: to_sqlite, tool: output_sqlite, inputs: {in: sorted}, config: {path: $home/sorted.sqlite, table: sorted}, position: {x: 600, y: 260}}
+YAML
+  as_app "test -s $home/smoke.yaml" || fail "could not write the workflow onto the device"
+
+  # Relaunch, so the home screen lists the new workflow.
+  adb shell am force-stop "$PKG"
+  from=$(lines)
+  adb shell am start -n "$PKG/.MainActivity"
+  if wait_for 'baguette: bounds Open smoke.yaml [0-9]+ [0-9]+' 120 "$from"; then
+    sleep 2
+    tap "Open smoke.yaml"
+    from=$(lines)
+    wait_for 'baguette: bounds Run workflow [0-9]+ [0-9]+' 30 "$from"
+    sleep 2
+    tap "Run workflow"
+    deadline=$((SECONDS + 60))
+    until as_app "test -s $home/sorted.csv && test -s $home/sorted.sqlite" 2>/dev/null; do
+      if ((SECONDS > deadline)); then break; fi
+      sleep 2
+    done
+    sleep 2
+    shot run
+    csv=$(as_app "cat $home/sorted.csv" 2>/dev/null | tr -d '\r' || true)
+    echo "sorted.csv:"
+    echo "$csv"
+    expected=$'id,customer_id,amount\n1,10,50\n3,10,30\n4,30,12\n2,20,5'
+    [[ $csv == "$expected" ]] || fail "the workflow's CSV output is not the sorted input"
+    magic=$(as_app "head -c 15 $home/sorted.sqlite" 2>/dev/null || true)
+    [[ $magic == "SQLite format 3" ]] || fail "the workflow wrote no SQLite database"
+  fi
 fi
 
 if adb shell pidof "$PKG" >/dev/null; then echo "app still running"; else
-  echo "FAIL: the app exited"
-  failures=$((failures + 1))
+  fail "the app exited"
 fi
-grep -E 'baguette|beam|ixpipe|FATAL|AndroidRuntime' "$OUT/logcat.txt" | tail -40 || true
+grep -E 'baguette|beam|ixpipe|FATAL|AndroidRuntime' "$OUT/logcat.txt" | tail -60 || true
 if ((failures > 0)); then
   echo "$failures check(s) failed"
   exit 1
 fi
-echo "PASS: ixpipe boots on Android and opens the canvas"
+echo "PASS: ixpipe runs a CSV to CSV and SQLite workflow on Android"
