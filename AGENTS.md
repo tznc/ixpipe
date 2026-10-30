@@ -57,8 +57,8 @@ one-off style is a bug. `design_rules_test.exs` enforces what can be checked.
   title, one sentence, at most one action (tested on home and canvas).
 - **Ribbon** (`<.ribbon>`, `<.ribbon_group>`), as in ixtable after Access:
   a row of tabs over labelled command groups, under the canvas header.
-  Home holds Edit (Undo, Redo) and View (zoom); In/Out, Preparation, Join
-  and Transform hold the tools. Commands are `:quiet` small buttons with
+  Home holds Edit (Undo, Redo) and View (zoom); In/Out, Preparation, Join,
+  Parse and Transform hold the tools. Commands are `:quiet` small buttons with
   a short noun ("CSV" in the Input group); the group name is a caption
   beneath. Save and Run stay in the header, always visible.
 - **Navigation**: drill-in uses `<.breadcrumb>` ("Workflows / sales.yaml"),

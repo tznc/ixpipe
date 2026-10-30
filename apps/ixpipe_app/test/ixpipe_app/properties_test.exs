@@ -107,4 +107,16 @@ defmodule IxpipeApp.PropertiesTest do
     Test.click(w, "Select orders")
     assert Test.text(w) =~ "Run the workflow to see this tool's results."
   end
+
+  test "a reshaping tool is configured in the panel and runs", %{w: w} do
+    IxpipeApp.UI.add(w, "transpose")
+    Test.click(w, "Connect from orders")
+    Test.click(w, "Connect to transpose_1 in")
+    Test.fill(w, "Key columns", "id")
+    Test.click(w, "Run workflow")
+    assert Test.text(w) =~ "Run succeeded"
+    Test.click(w, "Select transpose_1")
+    assert Test.text(w) =~ "name"
+    assert Test.text(w) =~ "amount"
+  end
 end

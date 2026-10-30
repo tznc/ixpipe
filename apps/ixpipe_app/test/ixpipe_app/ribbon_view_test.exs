@@ -6,7 +6,7 @@ defmodule IxpipeApp.RibbonViewTest do
   alias Baguette.Test
   alias IxpipeApp.UI
 
-  @tool_tabs ["In/Out tab", "Preparation tab", "Join tab", "Transform tab"]
+  @tool_tabs ["In/Out tab", "Preparation tab", "Join tab", "Parse tab", "Transform tab"]
 
   setup do
     dir = Path.join(System.tmp_dir!(), "ixpipe-ribbon-#{System.unique_integer([:positive])}")

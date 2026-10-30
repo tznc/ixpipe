@@ -28,9 +28,14 @@ defmodule IxpipeApp.MainView do
        {"Output", ~w(output_csv output_excel output_parquet output_sqlite)}
      ]},
     {"prepare", "Preparation",
-     [{"Columns", ~w(select formula)}, {"Rows", ~w(filter sort sample unique)}]},
+     [
+       {"Columns", ~w(select formula data_cleansing)},
+       {"Rows", ~w(filter sort sample unique)}
+     ]},
     {"join", "Join", [{"Combine", ~w(join union)}]},
-    {"transform", "Transform", [{"Aggregate", ~w(summarize)}]}
+    {"parse", "Parse", [{"Split", ~w(text_to_columns regex)}]},
+    {"transform", "Transform",
+     [{"Aggregate", ~w(summarize)}, {"Reshape", ~w(cross_tab transpose)}]}
   ]
 
   def mount(args) do
@@ -778,6 +783,10 @@ defmodule IxpipeApp.MainView do
     "output_parquet" => "Output Parquet",
     "input_sqlite" => "Input SQLite",
     "output_sqlite" => "Output SQLite",
+    "cross_tab" => "Cross tab",
+    "text_to_columns" => "Text to columns",
+    "regex" => "RegEx",
+    "data_cleansing" => "Data cleansing",
     "input_postgres" => "Input Postgres"
   }
   defp tool_label(tool), do: Map.get_lazy(@labels, tool, fn -> String.capitalize(tool) end)
