@@ -118,7 +118,7 @@ defmodule IxpipeApp.Components do
           aria-label={"#{label} tab"} phx-click={@event} phx-value-tab={key}
           class={"#{tab_size(@touch)} rounded-md cursor-pointer text-xs " <> tab_look(key == @selected)}>{label}</button>
       </div>
-      <div class={"flex-row items-stretch px-2 py-1 overflow-x-auto" <> if(@touch, do: "", else: " min-h-[88px]")}>{render_slot(@inner_block)}</div>
+      <div class={"flex-row items-stretch px-2 py-1 overflow-x-auto" <> if(@touch, do: "", else: " min-h-[90px]")}>{render_slot(@inner_block)}</div>
       <div class="h-px w-full bg-border" />
     </div>
     """
