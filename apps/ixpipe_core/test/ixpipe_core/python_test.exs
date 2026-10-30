@@ -100,11 +100,72 @@ defmodule IxpipeCore.PythonTest do
       end
     end
 
-    test "__import__, exec and from-imports go through the same allow-list" do
-      assert error("__import__('os')").message =~ "os isn't allowed"
-      assert error("exec('import socket')").message =~ "socket isn't allowed"
+    test "from-imports go through the allow-list" do
       assert error("from os import path").message =~ "os isn't allowed"
-      assert error("eval(\"__import__('subprocess')\")").message =~ "subprocess isn't allowed"
+
+      assert error("from json import loads\nimport subprocess").message =~
+               "subprocess isn't allowed"
+    end
+
+    test "exec, eval, compile and __import__ are refused to the script" do
+      assert error("exec('x = 1')").message =~ "PermissionError"
+      assert error("exec('x = 1')").message =~ "exec isn't allowed"
+      assert error("eval('1 + 1')").message =~ "eval isn't allowed"
+      assert error("compile('1', 'x', 'eval')").message =~ "compile isn't allowed"
+
+      assert error("__import__('os')").message =~
+               "SyntaxError on line 1: __import__ isn't allowed"
+    end
+
+    test "the stdlib still uses exec itself" do
+      code = ~S"""
+      from collections import namedtuple
+      P = namedtuple("P", "x y")
+      output = [P(1, 2)._asdict()]
+      """
+
+      assert {:ok, %{columns: ["x", "y"], rows: [[1, 2]]}} = run(code)
+    end
+
+    for {name, code} <- [
+          {"code objects", "f = lambda: 0\nc = f.__code__"},
+          {"function globals", "def f(): pass\ng = f.__globals__"},
+          {"builtins", "b = __builtins__"},
+          {"subclasses", "s = object.__subclasses__()"},
+          {"generator frames", "g = (i for i in [1])\nf = g.gi_frame"},
+          {"traceback frames", "try:\n    1 / 0\nexcept Exception as e:\n    t = e.__traceback__"}
+        ] do
+      test "#{name} are out of reach" do
+        error = error(unquote(code))
+        assert error.message =~ "SyntaxError"
+        assert error.message =~ "isn't allowed in the sandboxed Python tool"
+      end
+    end
+
+    test "getattr and operator can't name what the check refuses" do
+      assert error("def f(): pass\ng = getattr(f, '__glob' + 'als__')").message =~
+               "AttributeError on line 2: __globals__ isn't allowed"
+
+      assert error("import operator\ng = operator.attrgetter('__code__')").message =~
+               "__code__ isn't allowed"
+
+      assert error("hasattr(len, 'f_' + 'globals')").message =~ "f_globals isn't allowed"
+    end
+
+    test "classes, super and dunder methods still work" do
+      code = ~S"""
+      class Base:
+          def __init__(self, n):
+              self.n = n
+          def __repr__(self):
+              return f"{self.__class__.__name__}({self.n})"
+      class Child(Base):
+          def __init__(self, n):
+              super().__init__(n * 2)
+      output = [{"r": repr(Child(2)), "has": hasattr(Child(1), "n")}]
+      """
+
+      assert {:ok, %{rows: [["Child(4)", true]]}} = run(code)
     end
 
     test "allowed modules import" do
@@ -116,16 +177,6 @@ defmodule IxpipeCore.PythonTest do
       """
 
       assert {:ok, %{rows: [[3.14, 2]]}} = run(code)
-    end
-
-    test "no class reachable from object opens files or processes" do
-      code = ~S"""
-      names = sorted({c.__name__ for c in object.__subclasses__()})
-      bad = [n for n in names if n in ("FileIO", "Popen", "socket", "DirEntry", "ScandirIterator")]
-      output = [{"bad": ",".join(bad)}]
-      """
-
-      assert {:ok, %{rows: [[""]]}} = run(code)
     end
 
     test "an infinite loop stops at the time limit" do

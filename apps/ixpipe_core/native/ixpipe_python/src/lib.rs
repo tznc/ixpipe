@@ -7,7 +7,12 @@
 //!   stub `os` (no files, processes or environment) lets pure-Python stdlib
 //!   modules such as `random` import.
 //! - User code can import only an allow-list of pure-Python modules, and
-//!   `open` raises.
+//!   `open` raises. It can't reach code objects, frames or other modules'
+//!   globals: a check before it runs refuses introspection attributes
+//!   (`__code__`, `__globals__`, `gi_frame`, ...), and `getattr`, `exec`,
+//!   `eval`, `compile` and `__import__` refuse them when called from the
+//!   script (the stdlib's own calls pass). So it can't build bytecode or
+//!   reach `sys`.
 //! - Each run gets a fresh interpreter on its own thread, with a large stack
 //!   so deep recursion is a `RecursionError`, not a crash. A watchdog thread
 //!   interrupts it past its CPU time, wall time or memory budget, or when
@@ -23,7 +28,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use rustler::{Atom, Encoder, Env, NifResult, ResourceArc, Term, TermType};
-use rustpython_vm::builtins::{PyBaseExceptionRef, PyDict, PyFloat, PyInt, PyList, PyStr, PyTuple};
+use rustpython_vm::builtins::{
+    PyBaseExceptionRef, PyDict, PyDictRef, PyFloat, PyInt, PyList, PyStr, PyStrRef, PyTuple,
+};
 use rustpython_vm::function::FuncArgs;
 use rustpython_vm::scope::Scope;
 use rustpython_vm::signal::{UserSignal, UserSignalSender, user_signal_channel};
@@ -113,6 +120,27 @@ stat = lstat = listdir = scandir = remove = unlink = mkdir = makedirs = rmdir = 
 system = popen = execv = execve = fork = kill = chdir = getcwd = walk = _unavailable
 "#;
 
+/// Dunder attributes user code may name: the ones classes use.
+const DUNDERS: &[&str] = &[
+    "__init__", "__name__", "__qualname__", "__doc__", "__class__", "__len__", "__str__",
+    "__repr__", "__eq__", "__ne__", "__lt__", "__le__", "__gt__", "__ge__", "__hash__",
+    "__iter__", "__next__", "__getitem__", "__setitem__", "__delitem__", "__contains__",
+    "__enter__", "__exit__", "__add__", "__sub__", "__mul__", "__truediv__", "__floordiv__",
+    "__mod__", "__neg__", "__abs__", "__bool__", "__call__", "__post_init__",
+];
+
+/// Other attributes that lead to frames, code or globals.
+const INTROSPECTION: &[&str] = &[
+    "gi_frame", "gi_code", "gi_yieldfrom", "cr_frame", "cr_code", "cr_await", "ag_frame",
+    "ag_code", "ag_await", "f_globals", "f_builtins", "f_locals", "f_code", "f_back", "f_trace",
+    "tb_frame", "tb_next", "co_code", "co_consts", "mro",
+];
+
+fn refused(name: &str) -> bool {
+    INTROSPECTION.contains(&name)
+        || (name.starts_with("__") && name.ends_with("__") && !DUNDERS.contains(&name))
+}
+
 /// Run before user code, with the real import: stdout capture and the stub `os`.
 const PRELUDE: &str = r#"
 import sys, _io
@@ -125,9 +153,50 @@ sys.modules["os.path"] = posixpath
 sys.stdout = sys.stderr = sys.__stdout__ = sys.__stderr__ = _io.StringIO()
 sys.stdin = sys.__stdin__ = None
 sys.setrecursionlimit(_RECURSION)
+def _capped(limit, _set=sys.setrecursionlimit, _max=_RECURSION):
+    _set(min(limit, _max))
+sys.setrecursionlimit = _capped
+import operator
+def _guard(names, _refused=_REFUSED):
+    for name in names:
+        for part in str(name).split("."):
+            if _refused(part):
+                raise AttributeError(f"{part} isn't allowed in the sandboxed Python tool.")
+def _attrgetter(*names, _real=operator.attrgetter):
+    _guard(names)
+    return _real(*names)
+def _methodcaller(name, *args, _real=operator.methodcaller, **kwargs):
+    _guard([name])
+    return _real(name, *args, **kwargs)
+operator.attrgetter = _attrgetter
+operator.methodcaller = _methodcaller
 import builtins
 for _name in ("input", "breakpoint", "help", "exit", "quit", "copyright", "credits", "license"):
     builtins.__dict__.pop(_name, None)
+import _ast
+def _check(source, _compile=compile, _refused=_REFUSED):
+    tree = _compile(source, "script.py", "exec", _ast.PyCF_ONLY_AST)
+    lines = source.splitlines()
+    stack = [tree]
+    while stack:
+        node = stack.pop()
+        name = None
+        if isinstance(node, _ast.Attribute) and _refused(node.attr):
+            name = node.attr
+        elif isinstance(node, _ast.Name) and node.id.startswith("__") and node.id != "__name__":
+            name = node.id
+        if name is not None:
+            line = node.lineno
+            text = lines[line - 1] if line <= len(lines) else ""
+            error = SyntaxError(f"{name} isn't allowed in the sandboxed Python tool")
+            error.filename, error.lineno, error.offset, error.text = "script.py", line, node.col_offset + 1, text
+            raise error
+        for field in node._fields:
+            value = getattr(node, field, None)
+            if isinstance(value, list):
+                stack.extend(v for v in value if isinstance(v, _ast.AST))
+            elif isinstance(value, _ast.AST):
+                stack.append(value)
 "#;
 
 // ---------------------------------------------------------------------------
@@ -490,9 +559,12 @@ fn interpret(
     *sender.lock().unwrap() = Some(tx);
 
     let outcome = interpreter.enter(|vm| {
-        let result = setup(vm, recursion).and_then(|_| {
-            let scope = user_scope(vm, inputs)?;
-            match vm.run_string(scope.clone(), code, SCRIPT) {
+        let result = user_scope(vm, inputs).and_then(|scope| {
+            let check = setup(vm, recursion, &scope.globals)?;
+            let run = check
+                .call((code,), vm)
+                .and_then(|_| vm.run_string(scope.clone(), code, SCRIPT));
+            match run {
                 Ok(_) => Ok(Ok(scope)),
                 Err(exc) => Ok(Err(exc)),
             }
@@ -513,21 +585,66 @@ fn interpret(
     outcome
 }
 
-/// The stub `os`, stdout capture, the import allow-list and no `open`.
-fn setup(vm: &VirtualMachine, recursion: u32) -> PyResult<()> {
+/// The stub `os`, stdout capture, the import allow-list, guards on the
+/// builtins that reach other code, and no `open`. Returns the check user
+/// code passes before it runs.
+fn setup(vm: &VirtualMachine, recursion: u32, user: &PyDictRef) -> PyResult<PyObjectRef> {
     let scope = vm.new_scope_with_builtins();
+    let refused_fn = vm.new_function("_refused", |name: PyStrRef| -> bool {
+        refused(&name.to_string_lossy())
+    });
     scope.globals.set_item("__name__", vm.ctx.new_str("_ixpipe_sandbox").into(), vm)?;
     scope.globals.set_item("_OS_STUB", vm.ctx.new_str(OS_STUB).into(), vm)?;
     scope.globals.set_item("_RECURSION", vm.ctx.new_int(recursion).into(), vm)?;
-    vm.run_string(scope, PRELUDE, "<sandbox>")?;
+    scope.globals.set_item("_REFUSED", refused_fn.into(), vm)?;
+    vm.run_string(scope.clone(), PRELUDE, "<sandbox>")?;
+    let check = scope.globals.get_item("_check", vm)?;
 
     let builtins = vm.builtins.clone();
     let real_import = builtins.get_attr("__import__", vm)?;
+    let globals = user.clone();
     let guarded = vm.new_function("__import__", move |args: FuncArgs, vm: &VirtualMachine| -> PyResult {
-        check_import(&args, vm)?;
+        if from_script(vm, &globals) {
+            check_import(&args, vm)?;
+        }
         real_import.call(args, vm)
     });
     builtins.set_attr("__import__", guarded, vm)?;
+
+    // Reached from the script, these would build code or read attributes the
+    // check refuses; the stdlib uses them freely (namedtuple runs exec).
+    for name in ["exec", "eval", "compile"] {
+        let real = builtins.get_attr(name, vm)?;
+        let globals = user.clone();
+        let guarded = vm.new_function(name, move |args: FuncArgs, vm: &VirtualMachine| -> PyResult {
+            if from_script(vm, &globals) {
+                return Err(vm.new_exception_msg(
+                    vm.ctx.exceptions.permission_error.to_owned(),
+                    format!("{name} isn't allowed in the sandboxed Python tool.").into(),
+                ));
+            }
+            real.call(args, vm)
+        });
+        builtins.set_attr(name, guarded, vm)?;
+    }
+    for name in ["getattr", "setattr", "delattr", "hasattr"] {
+        let real = builtins.get_attr(name, vm)?;
+        let globals = user.clone();
+        let guarded = vm.new_function(name, move |args: FuncArgs, vm: &VirtualMachine| -> PyResult {
+            if let Some(attr) = args.args.get(1).and_then(|a| a.downcast_ref::<PyStr>())
+                && refused(&attr.to_string_lossy())
+                && from_script(vm, &globals)
+            {
+                return Err(vm.new_exception_msg(
+                    vm.ctx.exceptions.attribute_error.to_owned(),
+                    format!("{} isn't allowed in the sandboxed Python tool.", attr.to_string_lossy())
+                        .into(),
+                ));
+            }
+            real.call(args, vm)
+        });
+        builtins.set_attr(name, guarded, vm)?;
+    }
 
     let no_files = vm.new_function("open", |_args: FuncArgs, vm: &VirtualMachine| -> PyResult {
         Err(vm.new_exception_msg(
@@ -537,34 +654,26 @@ fn setup(vm: &VirtualMachine, recursion: u32) -> PyResult<()> {
         ))
     });
     builtins.set_attr("open", no_files, vm)?;
-    Ok(())
+    Ok(check)
 }
 
-/// User code (globals named `__main__`, or no globals) imports only allowed
-/// modules; the stdlib's own imports pass.
+/// Whether the running frame is the script's: its globals are the script's
+/// own dict, which nothing else shares.
+fn from_script(vm: &VirtualMachine, user: &PyDictRef) -> bool {
+    vm.current_frame().is_some_and(|frame| frame.f_globals().is(user))
+}
+
+/// The script imports only allowed modules (the stdlib's own imports don't
+/// come here).
 fn check_import(args: &FuncArgs, vm: &VirtualMachine) -> PyResult<()> {
     let name: String = match args.args.first() {
         Some(name) => name.str(vm)?.to_string(),
         None => return Ok(()),
     };
-    let globals = args.args.get(1).cloned().or_else(|| args.kwargs.get("globals").cloned());
     let level = match args.args.get(4).or_else(|| args.kwargs.get("level")) {
         Some(level) => level.try_to_value::<i64>(vm).unwrap_or(0),
         None => 0,
     };
-    let caller = match globals {
-        Some(g) if !vm.is_none(&g) => match g.downcast_ref::<PyDict>() {
-            Some(dict) => match dict.get_item_opt("__name__", vm)? {
-                Some(n) => n.str(vm)?.to_string(),
-                None => "__main__".to_owned(),
-            },
-            None => "__main__".to_owned(),
-        },
-        _ => "__main__".to_owned(),
-    };
-    if caller != "__main__" {
-        return Ok(());
-    }
     let top = name.split('.').next().unwrap_or("");
     if level == 0 && ALLOWED.contains(&top) {
         return Ok(());

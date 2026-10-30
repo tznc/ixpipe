@@ -53,7 +53,8 @@ defmodule IxpipeCore.Python do
          %{
            kind: kind,
            message: message(kind, name, message, traceback, timeout, memory),
-           traceback: traceback,
+           # The sandbox's own frames (its check) aren't the script's.
+           traceback: String.replace(traceback, ~r/^  File "<sandbox>".*\n/m, ""),
            stdout: stdout
          }}
     end
@@ -77,7 +78,11 @@ defmodule IxpipeCore.Python do
         lines -> " on line " <> (lines |> List.last() |> List.last())
       end
 
-    "Python raised #{name}#{where}: #{String.trim_trailing(message, ".")}."
+    # A SyntaxError's text ends with where it is: the line is said already.
+    message =
+      message |> String.replace(~r/ \(script\.py, line \d+\)$/, "") |> String.trim_trailing(".")
+
+    "Python raised #{name}#{where}: #{message}."
   end
 
   defp message(:timeout, _, _, _, timeout, _),
