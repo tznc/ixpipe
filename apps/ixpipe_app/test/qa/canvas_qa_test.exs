@@ -116,8 +116,8 @@ defmodule IxpipeApp.QA.CanvasTest do
       assert :ok = Playwright.await_text(page, "75%")
 
       QA.capture(page, "canvas-09-view", [
-        "A floating toolbar top right: Undo, Redo (dimmed), a divider, − 75% +, Restore view",
-        "All six cards (customers restored) drawn smaller and closer, wires following them",
+        "A floating toolbar top right: Undo (dimmed, nothing left to undo), Redo, a divider, − 75% +, Restore view",
+        "All six cards (customers restored) compact (name and tool only), none overlapping, wires following them",
         "Nothing in the panels or header moved"
       ])
     end

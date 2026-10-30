@@ -509,7 +509,7 @@ defmodule IxpipeApp.MainView do
   defp vx(node, zoom, {px, _}), do: scaled(node.position["x"] + px, zoom)
   defp vy(node, zoom, {_, py}), do: scaled(node.position["y"] + py, zoom)
   defp scaled(length, zoom), do: round(length * zoom / 100)
-  defp compact?(zoom), do: zoom < 75
+  defp compact?(zoom), do: zoom < 100
   defp zooms, do: @zooms
 
   defp card_state(id, selected, from) do

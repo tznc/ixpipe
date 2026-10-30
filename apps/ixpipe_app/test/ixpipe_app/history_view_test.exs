@@ -2,7 +2,6 @@ defmodule IxpipeApp.HistoryViewTest do
   # Undo and redo of canvas edits, and zooming and panning the view.
   use ExUnit.Case, async: false
   alias Baguette.Test
-  alias IxpipeCore.Spec
 
   @fixtures Path.expand("../fixtures", __DIR__)
 
@@ -101,10 +100,11 @@ defmodule IxpipeApp.HistoryViewTest do
     assert node(pid, "sorted").position == %{"x" => 400, "y" => 40}
   end
 
-  test "zoomed out below 75%, cards are compact", %{w: w} do
+  # Positions scale but full cards don't shrink, so any zoom-out would
+  # overlap them: below 100% cards are compact.
+  test "zoomed out, cards are compact", %{w: w} do
     Test.click(w, "Zoom out")
-    Test.click(w, "Zoom out")
-    assert Test.text(w) =~ "50%"
+    assert Test.text(w) =~ "75%"
     assert Test.find_all(w, "Remove orders") == []
     assert Test.find_all(w, "Select orders") != []
   end
