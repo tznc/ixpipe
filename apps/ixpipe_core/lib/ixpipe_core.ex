@@ -14,7 +14,8 @@ defmodule IxpipeCore do
   output's table by name: the node id for a tool with one output,
   `node.output` for each output of a tool with several. The tables live as
   long as a result references the database. The first node to raise fails
-  the run; nodes downstream of it do not run.
+  the run; nodes downstream of it do not run. Disabled tools and everything
+  downstream of them (`Spec.skipped/1`) are skipped: they have no results.
 
   Options: `:settings`, DuckDB `SET` options such as `memory_limit`.
   """
@@ -23,9 +24,10 @@ defmodule IxpipeCore do
           | {:error, {:node_failed, String.t(), String.t()}}
   def run(%Spec{} = spec, opts \\ []) do
     {:ok, db} = Duck.open(Keyword.get(opts, :settings, []))
+    skipped = Spec.skipped(spec)
 
     results =
-      spec
+      %{spec | nodes: Enum.reject(spec.nodes, &(&1.id in skipped))}
       |> to_runic(db)
       |> Workflow.react_until_satisfied(:run)
       |> Workflow.raw_productions_by_component()

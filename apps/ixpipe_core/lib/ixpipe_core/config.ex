@@ -38,6 +38,21 @@ defmodule IxpipeCore.Config do
 
   def format(_field, value), do: to_string(value)
 
+  @doc """
+  A one-line summary of a node's settings, for its annotation, as Alteryx
+  shows under a tool: "Sort by: amount · Descending: true".
+  """
+  @spec summary(IxpipeCore.Spec.Node.t()) :: String.t()
+  def summary(%{tool: tool, config: config}) do
+    parts =
+      for field <- tool.fields(),
+          value = config[field.key],
+          value not in [nil, "", []],
+          do: "#{field.label}: #{format(field, value) |> String.replace("\n", ", ")}"
+
+    Enum.join(parts, " · ")
+  end
+
   @spec parse(IxpipeCore.Tool.field(), String.t()) :: {:ok, term()} | {:error, String.t()}
   def parse(field, text) do
     case String.trim(text) do

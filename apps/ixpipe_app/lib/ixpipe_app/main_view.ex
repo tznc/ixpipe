@@ -13,6 +13,16 @@ defmodule IxpipeApp.MainView do
 
   @node_width 200
   @port_y 24
+  # A card's height, estimated (cards grow with their content), for the
+  # boxes containers draw around their tools.
+  @card_height 150
+  @annotation_height 24
+  # A container's padding around its tools, its title bar, and its size when
+  # empty or collapsed.
+  @box_pad 16
+  @box_bar 48
+  @box_empty {280, 160}
+  @comment_width 200
   @toast_ms 6_000
   @zooms [50, 75, 100, 125, 150]
   @history 100
@@ -56,6 +66,7 @@ defmodule IxpipeApp.MainView do
       toast: nil,
       rows: %{},
       previews: %{},
+      skipped: [],
       selected: nil,
       output: nil,
       drafts: %{},
@@ -108,6 +119,10 @@ defmodule IxpipeApp.MainView do
     assigns =
       Map.merge(assigns, %{
         node: Enum.find(assigns.spec.nodes, &(&1.id == assigns.selected)),
+        item: Edit.find(assigns.spec, assigns.selected),
+        hidden: hidden(assigns.spec),
+        off: off(assigns.spec),
+        boxes: boxes(assigns.spec),
         phone: phone?(assigns)
       })
 
@@ -136,6 +151,12 @@ defmodule IxpipeApp.MainView do
             <.button size={touch(@phone, :sm)} variant={:quiet} phx-click="redo" disabled={@future == []} icon="redo-2"
               aria-label="Redo" title={"Redo (#{shortcut("Shift+Z")})"}>Redo</.button>
           </.ribbon_group>
+          <.ribbon_group label="Organise">
+            <.button size={touch(@phone, :sm)} variant={:quiet} phx-click="add_container" icon="square-dashed"
+              aria-label="Add container" title="Add a container around the selected tool">Container</.button>
+            <.button size={touch(@phone, :sm)} variant={:quiet} phx-click="add_comment" icon="message-square-text"
+              aria-label="Add comment">Comment</.button>
+          </.ribbon_group>
           <.ribbon_group label="View">
             <.button size={touch(@phone, :sm)} variant={:quiet} phx-click="zoom" phx-value-by="-1" icon="zoom-out"
               disabled={@zoom == hd(zooms())} aria-label="Zoom out" title={"Zoom out (#{shortcut("-")})"} />
@@ -155,7 +176,8 @@ defmodule IxpipeApp.MainView do
       <div class={"relative flex-1 " <> if(@phone, do: "flex-col", else: "flex-row")}>
         <div :if={!@phone || @pane == "canvas"} class="flex-col flex-1">
         <div class="relative flex-1 overflow-hidden bg-canvas">
-          <.empty_state :if={@spec.nodes == []} title="This workflow is empty">
+          <.empty_state :if={@spec.nodes == [] and @spec.containers == [] and @spec.comments == []}
+            title="This workflow is empty">
             Add a tool from a ribbon tab above.
           </.empty_state>
           <%!-- The surface is as large as the furthest node, so the canvas
@@ -164,13 +186,36 @@ defmodule IxpipeApp.MainView do
           <%!-- Dragging the empty surface pans the view; nodes claim their own drags. --%>
           <div class={"relative #{surface(@spec, @zoom, @pan)}"} aria-label="Canvas surface"
             phx-drag="pan">
-          <line :for={{from, to, out_slot, in_slot} <- edges(@spec)} curve
-            x1={vx(from, @zoom, @pan) + scaled(node_width(), @zoom)}
-            y1={vy(from, @zoom, @pan) + scaled(port_y() + 12 * out_slot, @zoom)}
-            x2={vx(to, @zoom, @pan)} y2={vy(to, @zoom, @pan) + scaled(port_y() + 12 * in_slot, @zoom)}
+          <%!-- Containers sit behind the tools they hold; dragging one moves them all. --%>
+          <div :for={{c, {x, y, w, h}} <- @boxes} aria-label={c.id} phx-drag="move" phx-value-id={c.id}
+            class={"absolute left-[#{at(x, @pan, 0, @zoom)}px] top-[#{at(y, @pan, 1, @zoom)}px] w-[#{scaled(w, @zoom)}px] h-[#{scaled(h, @zoom)}px] flex-col rounded-md border " <>
+              box_state(c.id, @selected) <> if(c.disabled, do: " opacity-40", else: "")}>
+            <div class="flex-row items-center gap-1 px-2 py-1">
+              <.button variant={:quiet} size={:sm} phx-click="collapse" phx-value-id={c.id}
+                icon={if c.collapsed, do: "chevron-right", else: "chevron-down"}
+                aria-label={"#{if c.collapsed, do: "Expand", else: "Collapse"} #{c.id}"} />
+              <.button variant={:quiet} size={:sm} class="px-0" phx-click="select" phx-value-id={c.id}
+                aria-label={"Select #{c.id}"}><.section>{box_title(c)}</.section></.button>
+              <.status_badge :if={c.disabled}>Disabled</.status_badge>
+            </div>
+          </div>
+          <div :for={c <- @spec.comments} aria-label={c.id} phx-drag="move" phx-value-id={c.id}
+            class={"absolute left-[#{at(c.position["x"], @pan, 0, @zoom)}px] top-[#{at(c.position["y"], @pan, 1, @zoom)}px] w-[#{scaled(comment_width(), @zoom)}px] flex-col gap-1 p-2 rounded-md border " <>
+              box_state(c.id, @selected)}>
+            <.button variant={:quiet} size={:sm} class="px-0" phx-click="select" phx-value-id={c.id}
+              aria-label={"Select #{c.id}"} icon="message-square-text" />
+            <.body :if={c.text != ""}>{c.text}</.body>
+            <.caption :if={c.text == ""}>Empty comment</.caption>
+          </div>
+          <line :for={{x1, y1, x2, y2} <- wires(@spec, @boxes)} curve
+            x1={at(x1, @pan, 0, @zoom)} y1={at(y1, @pan, 1, @zoom)}
+            x2={at(x2, @pan, 0, @zoom)} y2={at(y2, @pan, 1, @zoom)}
             class="stroke-muted-foreground" />
-          <div :for={node <- @spec.nodes} aria-label={node.id} phx-drag="move" phx-value-id={node.id}
-            class={"absolute left-[#{vx(node, @zoom, @pan)}px] top-[#{vy(node, @zoom, @pan)}px] w-[#{scaled(node_width(), @zoom)}px] flex-col gap-2 rounded-md border #{if compact?(@zoom), do: "p-2", else: "p-3"} " <> card_state(node.id, @selected, @from)}>
+          <%!-- A tool's annotation sits under its card. --%>
+          <div :for={node <- @spec.nodes} :if={node.id not in @hidden} aria-label={node.id} phx-drag="move" phx-value-id={node.id}
+            class={"absolute left-[#{vx(node, @zoom, @pan)}px] top-[#{vy(node, @zoom, @pan)}px] w-[#{scaled(node_width(), @zoom)}px] flex-col gap-1" <>
+              if(node.id in @off, do: " opacity-40", else: "")}>
+          <div class={"flex-col gap-2 rounded-md border #{if compact?(@zoom), do: "p-2", else: "p-3"} " <> card_state(node.id, @selected, @from)}>
             <div class="flex-row flex-wrap items-center justify-between gap-2">
               <.button variant={:quiet} size={:sm} class="px-0" phx-click="select" phx-value-id={node.id}
                 aria-label={"Select #{node.id}"}><.section>{node.id}</.section></.button>
@@ -180,6 +225,7 @@ defmodule IxpipeApp.MainView do
             <div class="flex-row items-center gap-2">
               <.caption>{tool_label(Tools.name(node.tool))}</.caption>
               <.status_badge :if={@rows[node.id]} tone={:success}>{plural(@rows[node.id], "row")}</.status_badge>
+              <.status_badge :if={node.id in @skipped}>Skipped</.status_badge>
             </div>
             <div :if={multi?(node)} class="flex-row flex-wrap gap-1">
               <.status_badge :for={out <- Tools.outputs(node.tool)} :if={@rows["#{node.id}.#{out}"]}
@@ -200,6 +246,8 @@ defmodule IxpipeApp.MainView do
                 phx-value-from={ref} aria-label={label}>{out}</.button>
             </div>
           </div>
+          <.caption :if={node.annotation} class="px-1">{node.annotation}</.caption>
+          </div>
           </div>
           </div>
           <%!-- Top right of the canvas, clear of the header's buttons. --%>
@@ -207,13 +255,13 @@ defmodule IxpipeApp.MainView do
         </div>
         <div :if={!@phone} class="h-px w-full bg-border" />
         <.results :if={!@phone} node={@node} output={@node && output_key(@node, @output)}
-          preview={@node && @previews[output_key(@node, @output)]} />
+          preview={@node && @previews[output_key(@node, @output)]} skipped={@node && @node.id in @skipped} />
         </div>
         <.results :if={@phone && @pane == "results"} node={@node} output={@node && output_key(@node, @output)}
-          preview={@node && @previews[output_key(@node, @output)]} phone />
+          preview={@node && @previews[output_key(@node, @output)]} skipped={@node && @node.id in @skipped} phone />
         <div :if={!@phone} class="w-px h-full bg-border" />
-        <.properties :if={!@phone || @pane == "properties"} node={@node} drafts={@drafts} errors={@errors}
-          formula_rows={@formula_rows} dir={@dir} phone={@phone} />
+        <.properties :if={!@phone || @pane == "properties"} node={@node} item={@item} drafts={@drafts} errors={@errors}
+          formula_rows={@formula_rows} dir={@dir} phone={@phone} containers={@spec.containers} off={@off} />
         <%!-- On a phone, over whichever pane shows. --%>
         <.feedback :if={@phone} toast={@toast} status={@status} phone />
       </div>
@@ -243,14 +291,62 @@ defmodule IxpipeApp.MainView do
     {:noreply, %{assigns | toast: "Saved #{Path.basename(assigns.path)}"}}
   end
 
+  # With a container selected, the new tool goes inside it.
   def handle_event("add", %{"tool" => tool}, assigns) do
-    at = %{
-      "x" => 40 + 30 * length(assigns.spec.nodes),
-      "y" => 40 + 30 * length(assigns.spec.nodes)
-    }
+    {at, container} =
+      case Edit.find(assigns.spec, assigns.selected) do
+        %Spec.Container{} = c -> {inside(assigns.spec, c), c.id}
+        _ -> {free_spot(assigns.spec), nil}
+      end
 
-    assigns = edit(assigns, &Edit.add_node(&1, tool, at))
+    assigns = edit(assigns, &Edit.add_node(&1, tool, at, container))
     {:noreply, select(assigns, List.last(assigns.spec.nodes).id)}
+  end
+
+  # With a tool selected, the new container holds it.
+  def handle_event("add_container", _values, assigns) do
+    held = for %Spec.Node{id: id} <- [Edit.find(assigns.spec, assigns.selected)], do: id
+    assigns = edit(assigns, &Edit.add_container(&1, free_spot(&1), held))
+    {:noreply, select(assigns, List.last(assigns.spec.containers).id)}
+  end
+
+  def handle_event("add_comment", _values, assigns) do
+    assigns = edit(assigns, &Edit.add_comment(&1, free_spot(&1)))
+    {:noreply, select(assigns, List.last(assigns.spec.comments).id)}
+  end
+
+  def handle_event("collapse", %{"id" => id}, assigns) do
+    collapsed = match?(%Spec.Container{collapsed: true}, Edit.find(assigns.spec, id))
+    {:noreply, edit(assigns, &Edit.set_collapsed(&1, id, not collapsed))}
+  end
+
+  def handle_event("disable", %{"id" => id}, assigns) do
+    disabled = match?(%{disabled: true}, Edit.find(assigns.spec, id))
+    {:noreply, edit(assigns, &Edit.set_disabled(&1, id, not disabled))}
+  end
+
+  def handle_event("contain", %{"id" => id, "container" => container}, assigns),
+    do: {:noreply, edit(assigns, &Edit.contain(&1, id, if(container != "", do: container)))}
+
+  # A container's title or a comment's text, typed: one undo step per item.
+  def handle_event("set_text", values, %{selected: id} = assigns) when is_binary(id),
+    do: {:noreply, edit(assigns, &Edit.set_text(&1, id, values["text"] || ""), {:text, id})}
+
+  def handle_event("annotate", values, %{selected: id} = assigns) when is_binary(id) do
+    text = values["annotation"] || ""
+    assigns = edit(assigns, &Edit.set_annotation(&1, id, text), {:annotation, id})
+    {:noreply, %{assigns | drafts: Map.put(assigns.drafts, "_annotation", text)}}
+  end
+
+  def handle_event("summarise", _values, %{selected: id} = assigns) when is_binary(id) do
+    case Edit.find(assigns.spec, id) do
+      %Spec.Node{} = node ->
+        assigns = edit(assigns, &Edit.set_annotation(&1, id, Config.summary(node)))
+        {:noreply, %{assigns | drafts: Map.delete(assigns.drafts, "_annotation")}}
+
+      _ ->
+        {:noreply, assigns}
+    end
   end
 
   # On a phone, choosing a tool shows its properties.
@@ -298,7 +394,7 @@ defmodule IxpipeApp.MainView do
   # canvas distance under the pointer.
   def handle_event("move", %{"id" => id, "dx" => dx, "dy" => dy}, %{zoom: zoom} = assigns) do
     {dx, dy} = {round(dx * 100 / zoom), round(dy * 100 / zoom)}
-    {:noreply, edit(assigns, &Edit.move_node(&1, id, dx, dy))}
+    {:noreply, edit(assigns, &Edit.move(&1, id, dx, dy))}
   end
 
   def handle_event("pan", %{"dx" => dx, "dy" => dy}, %{zoom: zoom, pan: {px, py}} = assigns) do
@@ -367,9 +463,12 @@ defmodule IxpipeApp.MainView do
 
   def handle_event("redo", _values, assigns), do: {:noreply, assigns}
 
-  def handle_event("remove", %{"id" => id}, assigns) do
-    assigns = edit(assigns, &Edit.remove_node(&1, id))
-    {:noreply, if(assigns.selected == id, do: select(assigns, nil), else: assigns)}
+  # A container goes alone, or with its tools when `tools` is "true".
+  def handle_event("remove", %{"id" => id} = values, assigns) do
+    assigns = edit(assigns, &Edit.remove(&1, id, with_tools: values["tools"] == "true"))
+
+    {:noreply,
+     if(Edit.find(assigns.spec, assigns.selected), do: assigns, else: select(assigns, nil))}
   end
 
   def handle_event("connect_from", %{"from" => from}, assigns) do
@@ -407,19 +506,28 @@ defmodule IxpipeApp.MainView do
             do: "Results shows #{assigns.selected}.",
             else: "Select a tool to see its rows in Results."
 
+        skipped = Spec.skipped(assigns.spec)
+
+        hint =
+          if skipped == [],
+            do: hint,
+            else: "#{hint} #{plural(length(skipped), "tool")} skipped: disabled, or after one."
+
         status = {:success, "Run succeeded", hint}
 
         # On a phone, a selected tool's rows show at once.
         pane = if phone?(assigns) && assigns.selected, do: "results", else: assigns.pane
-        {:noreply, %{assigns | status: status, rows: rows, previews: previews, pane: pane}}
+
+        {:noreply,
+         %{assigns | status: status, rows: rows, previews: previews, pane: pane, skipped: skipped}}
 
       {:error, {:node_failed, id, message}} ->
         status = {:danger, "#{id} failed.", "#{message} Fix its config and run again."}
-        {:noreply, %{assigns | status: status, rows: %{}, previews: %{}}}
+        {:noreply, %{assigns | status: status, rows: %{}, previews: %{}, skipped: []}}
 
       {:error, reason} ->
         status = {:danger, "The workflow can't run yet.", Spec.format_error(reason)}
-        {:noreply, %{assigns | status: status, rows: %{}, previews: %{}}}
+        {:noreply, %{assigns | status: status, rows: %{}, previews: %{}, skipped: []}}
     end
   end
 
@@ -440,6 +548,7 @@ defmodule IxpipeApp.MainView do
         status: nil,
         toast: nil,
         rows: %{},
+        skipped: [],
         pane: "canvas"
     }
   end
@@ -447,7 +556,15 @@ defmodule IxpipeApp.MainView do
   defp open(assigns, path) do
     case path |> File.read!() |> Spec.decode() do
       {:ok, spec} ->
-        %{assigns | spec: place(spec), path: path, error: nil, status: nil, rows: %{}}
+        %{
+          assigns
+          | spec: spec |> place() |> fit_boxes(),
+            path: path,
+            error: nil,
+            status: nil,
+            rows: %{},
+            skipped: []
+        }
 
       {:error, reason} ->
         %{home(assigns) | error: "#{Path.basename(path)}: #{Spec.format_error(reason)}"}
@@ -470,7 +587,7 @@ defmodule IxpipeApp.MainView do
   # Applies an edit and records the workflow before it for undo. Edits with
   # the same `step` in a row (typing into one setting) are one undo step.
   defp edit(assigns, fun, step \\ nil) do
-    spec = fun.(assigns.spec)
+    spec = assigns.spec |> fun.() |> fit_boxes()
 
     past =
       cond do
@@ -490,8 +607,123 @@ defmodule IxpipeApp.MainView do
         from: nil,
         status: nil,
         rows: %{},
-        previews: %{}
+        previews: %{},
+        skipped: []
     }
+  end
+
+  # Where something new goes: a step down and right for each thing there.
+  defp free_spot(spec) do
+    n = length(spec.nodes) + length(spec.containers) + length(spec.comments)
+    %{"x" => 40 + 30 * n, "y" => 40 + 30 * n}
+  end
+
+  # Where a tool created in container `c` goes: inside an empty one, or to
+  # the right of its tools.
+  defp inside(spec, c) do
+    case Enum.filter(spec.nodes, &(&1.id in c.nodes)) do
+      [] ->
+        %{"x" => c.position["x"] + @box_pad, "y" => c.position["y"] + @box_bar}
+
+      held ->
+        %{
+          "x" => Enum.max(Enum.map(held, & &1.position["x"])) + @node_width + 40,
+          "y" => Enum.min(Enum.map(held, & &1.position["y"]))
+        }
+    end
+  end
+
+  # A container holding tools is drawn around them, so its saved position
+  # follows its box; one too near the canvas's edge for its title bar moves
+  # down and right, with its tools, to make room.
+  defp fit_boxes(spec) do
+    Enum.reduce(spec.containers, spec, fn c, spec ->
+      case Enum.filter(spec.nodes, &(&1.id in c.nodes)) do
+        [] ->
+          spec
+
+        held ->
+          x = Enum.min(Enum.map(held, & &1.position["x"])) - @box_pad
+          y = Enum.min(Enum.map(held, & &1.position["y"])) - @box_bar
+          spec = Edit.move(spec, c.id, max(-x, 0), max(-y, 0))
+          at = %{"x" => max(x, 0), "y" => max(y, 0)}
+
+          %{
+            spec
+            | containers:
+                Enum.map(spec.containers, &if(&1.id == c.id, do: %{&1 | position: at}, else: &1))
+          }
+      end
+    end)
+  end
+
+  # Tools hidden in collapsed containers.
+  defp hidden(spec), do: for(c <- spec.containers, c.collapsed, id <- c.nodes, do: id)
+
+  # Tools drawn disabled: their own, or their container's.
+  defp off(spec) do
+    for(node <- spec.nodes, node.disabled, do: node.id) ++
+      for(c <- spec.containers, c.disabled, id <- c.nodes, do: id)
+  end
+
+  # Each container with its box, `{x, y, width, height}` on the canvas.
+  defp boxes(spec), do: for(c <- spec.containers, do: {c, box(c, spec.nodes)})
+
+  defp box(c, nodes) do
+    %{"x" => x, "y" => y} = c.position
+    {empty_w, empty_h} = @box_empty
+
+    case Enum.filter(nodes, &(&1.id in c.nodes)) do
+      _ when c.collapsed ->
+        {x, y, 240, @box_bar}
+
+      [] ->
+        {x, y, empty_w, empty_h}
+
+      held ->
+        right = Enum.max(Enum.map(held, &(&1.position["x"] + @node_width))) + @box_pad
+        bottom = Enum.max(Enum.map(held, &(&1.position["y"] + card_height(&1)))) + @box_pad
+        {x, y, right - x, bottom - y}
+    end
+  end
+
+  defp card_height(%{annotation: nil}), do: @card_height
+  defp card_height(_node), do: @card_height + @annotation_height
+
+  defp box_title(%{title: ""}), do: "Untitled container"
+  defp box_title(%{title: title}), do: title
+
+  # Containers and comments: a grey box, teal-bordered when selected.
+  defp box_state(id, id), do: "border-primary bg-muted/40"
+  defp box_state(_id, _selected), do: "border-border bg-muted/40"
+
+  # Each wire as `{x1, y1, x2, y2}` on the canvas. A wire to or from a tool
+  # in a collapsed container ends at the container's edge; one inside it is
+  # hidden.
+  defp wires(spec, boxes) do
+    folded = for {c, b} <- boxes, c.collapsed, id <- c.nodes, into: %{}, do: {id, {c.id, b}}
+
+    for {source, node, out_slot, in_slot} <- edges(spec),
+        from = folded[source.id],
+        to = folded[node.id],
+        from == nil or to == nil or elem(from, 0) != elem(to, 0) do
+      {x1, y1} =
+        case from do
+          nil ->
+            {source.position["x"] + @node_width, source.position["y"] + @port_y + 12 * out_slot}
+
+          {_, {x, y, w, h}} ->
+            {x + w, y + div(h, 2)}
+        end
+
+      {x2, y2} =
+        case to do
+          nil -> {node.position["x"], node.position["y"] + @port_y + 12 * in_slot}
+          {_, {x, y, _w, h}} -> {x, y + div(h, 2)}
+        end
+
+      {x1, y1, x2, y2}
+    end
   end
 
   # Database tools find saved connections in the workflows folder; it is
@@ -500,7 +732,7 @@ defmodule IxpipeApp.MainView do
     do: %{spec | nodes: Enum.map(spec.nodes, &%{&1 | config: Map.put(&1.config, "_home", dir)})}
 
   defp restore(assigns, spec) do
-    selected = if Enum.any?(spec.nodes, &(&1.id == assigns.selected)), do: assigns.selected
+    selected = if Edit.find(spec, assigns.selected), do: assigns.selected
 
     %{
       assigns
@@ -510,6 +742,7 @@ defmodule IxpipeApp.MainView do
         status: nil,
         rows: %{},
         previews: %{},
+        skipped: [],
         selected: selected,
         drafts: %{},
         errors: %{}
@@ -593,27 +826,37 @@ defmodule IxpipeApp.MainView do
     end
   end
 
-  # The surface covers the furthest tool at the current zoom and pan.
+  # The surface covers the furthest tool, container or comment at the
+  # current zoom and pan.
   defp surface(spec, zoom, {px, py}) do
     {w, h} =
-      Enum.reduce(spec.nodes, {0, 0}, fn %{position: %{"x" => x, "y" => y}}, {w, h} ->
-        {max(w, x + px + @node_width + 40), max(h, y + py + 160)}
+      Enum.reduce(extents(spec), {0, 0}, fn {x, y, width, height}, {w, h} ->
+        {max(w, x + px + width + 40), max(h, y + py + height + 10)}
       end)
 
     "w-[#{scaled(w, zoom)}px] h-[#{scaled(h, zoom)}px]"
   end
 
-  defp min_position(%{nodes: []}), do: {0, 0}
+  # Everything on the canvas as `{x, y, width, height}`.
+  defp extents(spec) do
+    for(%{position: %{"x" => x, "y" => y}} <- spec.nodes, do: {x, y, @node_width, 150}) ++
+      for({_c, box} <- boxes(spec), do: box) ++
+      for(%{position: %{"x" => x, "y" => y}} <- spec.comments, do: {x, y, @comment_width, 80})
+  end
 
   defp min_position(spec) do
-    {Enum.min(Enum.map(spec.nodes, & &1.position["x"])),
-     Enum.min(Enum.map(spec.nodes, & &1.position["y"]))}
+    case extents(spec) do
+      [] -> {0, 0}
+      all -> {Enum.min(Enum.map(all, &elem(&1, 0))), Enum.min(Enum.map(all, &elem(&1, 1)))}
+    end
   end
 
   # Where a tool shows: its canvas position, panned, at the zoom.
   defp vx(node, zoom, {px, _}), do: scaled(node.position["x"] + px, zoom)
   defp vy(node, zoom, {_, py}), do: scaled(node.position["y"] + py, zoom)
   defp scaled(length, zoom), do: round(length * zoom / 100)
+  # A canvas coordinate on screen: `axis` 0 is x, 1 is y.
+  defp at(value, pan, axis, zoom), do: scaled(value + elem(pan, axis), zoom)
   defp compact?(zoom), do: zoom < 100
   defp zooms, do: @zooms
 
@@ -647,6 +890,7 @@ defmodule IxpipeApp.MainView do
   attr(:node, :map, default: nil)
   attr(:preview, :map, default: nil)
   attr(:output, :string, default: nil)
+  attr(:skipped, :boolean, default: false)
   attr(:phone, :boolean, default: false)
 
   defp results(assigns) do
@@ -664,7 +908,10 @@ defmodule IxpipeApp.MainView do
         </.button>
       </div>
       <.caption :if={!@node}>Select a tool to see its results.</.caption>
-      <.caption :if={@node && !@preview}>Run the workflow to see this tool's results.</.caption>
+      <.caption :if={@node && !@preview && @skipped}>
+        This tool was skipped: it is disabled, or follows a disabled tool. Enable it and run again.
+      </.caption>
+      <.caption :if={@node && !@preview && !@skipped}>Run the workflow to see this tool's results.</.caption>
       <div :if={@preview} class="flex-col flex-1 overflow-scroll">
         <table class="flex-col">
           <tr class="flex-row py-1">
@@ -690,27 +937,140 @@ defmodule IxpipeApp.MainView do
   end
 
   attr(:node, :map, default: nil)
+  attr(:item, :map, default: nil)
   attr(:drafts, :map, required: true)
   attr(:errors, :map, required: true)
   attr(:formula_rows, :integer, required: true)
   attr(:dir, :string, required: true)
   attr(:phone, :boolean, default: false)
+  attr(:containers, :list, default: [])
+  attr(:off, :list, default: [])
 
   defp properties(assigns) do
     ~H"""
     <aside class={"flex-col gap-6 p-4 overflow-y-scroll " <> if(@phone, do: "flex-1 w-full", else: "w-[320px]")}
       aria-label="Configuration">
-      <.empty_state :if={!@node} title="Nothing selected">Select a tool to configure it.</.empty_state>
+      <.empty_state :if={!@item} title="Nothing selected">Select a tool to configure it.</.empty_state>
+      <.container_properties :if={match?(%Spec.Container{}, @item)} container={@item} size={touch(@phone, :sm)} />
+      <.comment_properties :if={match?(%Spec.Comment{}, @item)} comment={@item} size={touch(@phone, :sm)} />
       <div :if={@node} class="flex-col gap-1">
         <.section>{@node.id}</.section>
         <.caption>{tool_label(Tools.name(@node.tool))}</.caption>
       </div>
+      <.organise :if={@node} node={@node} containers={@containers} off={@off} drafts={@drafts}
+        size={touch(@phone, :sm)} />
       <.caption :if={@node && @node.tool.fields() == []}>This tool has no settings.</.caption>
       <form :if={@node} phx-change="config" aria-label="Settings" class="flex-col gap-3">
         <.field :for={field <- @node.tool.fields()} field={field} node={@node} drafts={@drafts}
           error={@errors[field.key]} formula_rows={@formula_rows} dir={@dir} size={touch(@phone, :sm)} />
       </form>
     </aside>
+    """
+  end
+
+  attr(:container, :map, required: true)
+  attr(:size, :atom, default: :sm)
+
+  defp container_properties(assigns) do
+    ~H"""
+    <div class="flex-col gap-1">
+      <.section>{box_title(@container)}</.section>
+      <.caption>Container · {plural(length(@container.nodes), "tool")}</.caption>
+    </div>
+    <div class="flex-col gap-1">
+      <.label>Title</.label>
+      <input name="text" value={@container.title} phx-change="set_text" aria-label="Title" class="w-full" />
+    </div>
+    <div class="flex-row flex-wrap gap-1">
+      <.button size={@size} phx-click="collapse" phx-value-id={@container.id}
+        icon={if @container.collapsed, do: "chevron-right", else: "chevron-down"}
+        aria-label={if @container.collapsed, do: "Expand container", else: "Collapse container"}>
+        {if @container.collapsed, do: "Expand container", else: "Collapse container"}
+      </.button>
+      <.button size={@size} phx-click="disable" phx-value-id={@container.id}
+        icon={if @container.disabled, do: "circle-check", else: "circle-off"}
+        aria-label={if @container.disabled, do: "Enable container", else: "Disable container"}>
+        {if @container.disabled, do: "Enable container", else: "Disable container"}
+      </.button>
+    </div>
+    <.caption>
+      A disabled container's tools, and everything after them, are skipped when the workflow runs.
+    </.caption>
+    <div class="flex-row flex-wrap gap-1">
+      <.button variant={:danger} size={@size} phx-click="remove" phx-value-id={@container.id}
+        aria-label="Remove container">Remove container</.button>
+      <.button variant={:danger} size={@size} phx-click="remove" phx-value-id={@container.id} phx-value-tools="true"
+        aria-label="Remove container and tools">Remove container and tools</.button>
+    </div>
+    """
+  end
+
+  attr(:comment, :map, required: true)
+  attr(:size, :atom, default: :sm)
+
+  defp comment_properties(assigns) do
+    ~H"""
+    <.section>Comment</.section>
+    <div class="flex-col gap-1">
+      <.label>Text</.label>
+      <input name="text" value={@comment.text} phx-change="set_text" aria-label="Comment"
+        placeholder="A note on the canvas" class="w-full" />
+    </div>
+    <div class="flex-row">
+      <.button variant={:danger} size={@size} phx-click="remove" phx-value-id={@comment.id}
+        aria-label="Remove comment">Remove comment</.button>
+    </div>
+    """
+  end
+
+  attr(:node, :map, required: true)
+  attr(:containers, :list, required: true)
+  attr(:off, :list, required: true)
+  attr(:drafts, :map, required: true)
+  attr(:size, :atom, default: :sm)
+
+  # A tool's place on the canvas: enabled or not, its container, its annotation.
+  defp organise(assigns) do
+    assigns =
+      assign(assigns, :holder, Enum.find(assigns.containers, &(assigns.node.id in &1.nodes)))
+
+    ~H"""
+    <div class="flex-col gap-3">
+      <div class="flex-col gap-1">
+        <div class="flex-row">
+          <.button size={@size} phx-click="disable" phx-value-id={@node.id}
+            icon={if @node.disabled, do: "circle-check", else: "circle-off"}
+            aria-label={if @node.disabled, do: "Enable tool", else: "Disable tool"}>
+            {if @node.disabled, do: "Enable tool", else: "Disable tool"}
+          </.button>
+        </div>
+        <.caption :if={@node.disabled}>A run skips it, with every tool after it.</.caption>
+        <.caption :if={!@node.disabled && @node.id in @off}>Disabled by its container.</.caption>
+      </div>
+      <div :if={@containers != []} class="flex-col gap-1">
+        <.label>Container</.label>
+        <div class="flex-row flex-wrap gap-1">
+          <.button :for={c <- @containers} size={@size} phx-click="contain" phx-value-id={@node.id}
+            phx-value-container={c.id} aria-label={"Put in #{box_title(c)}"}
+            class={if @holder == c, do: "border-primary bg-primary/12", else: ""}>{box_title(c)}</.button>
+          <.button :if={@holder} size={@size} phx-click="contain" phx-value-id={@node.id} phx-value-container=""
+            aria-label="Take out of container">None</.button>
+        </div>
+      </div>
+      <div class="flex-col gap-1">
+        <div class="flex-row items-center gap-2">
+          <.label>Annotation</.label>
+          <.caption>Optional</.caption>
+        </div>
+        <input name="annotation" value={@drafts["_annotation"] || @node.annotation || ""} phx-change="annotate"
+          aria-label="Annotation" placeholder="Shown under the tool" class="w-full" />
+        <div class="flex-row">
+          <.button size={@size} phx-click="summarise" icon="text" aria-label="Summarise settings">
+            Summarise settings
+          </.button>
+        </div>
+      </div>
+    </div>
     """
   end
 
@@ -941,5 +1301,5 @@ defmodule IxpipeApp.MainView do
   defp touch(false, size), do: size
 
   defp node_width, do: @node_width
-  defp port_y, do: @port_y
+  defp comment_width, do: @comment_width
 end
