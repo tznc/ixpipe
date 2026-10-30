@@ -3,14 +3,37 @@ defmodule IxpipeCore.Connections do
   Saved database connections, in `connections.yaml` in the workflows home
   (`IXPIPE_HOME`). A workflow names one in a tool's `connection` setting.
 
-  Each connection has a `name`, a `type` (`postgres` or `sqlite`) and its
-  settings: `host`, `port`, `database`, `username` and `password_env` for
-  Postgres, `path` for SQLite. Passwords are never saved: `password_env` names
-  the environment variable that holds one.
+  Each connection has a `name`, a `type` and its settings:
+
+  | Type | Settings |
+  | --- | --- |
+  | `postgres`, `mysql`, `sqlserver` | `host`, `port`, `database`, `username`, `password_env` (`sqlserver`: `ssl`) |
+  | `sqlite` | `path` |
+  | `s3` | `key_id`, `secret_env`, `region`, `endpoint`, `session_token_env`, `url_style`, `use_ssl` |
+  | `gcs` | `key_id`, `secret_env` (an HMAC key) |
+  | `azure` | `connection_string_env` |
+
+  Secrets are never saved: a setting ending in `_env` names the environment
+  variable that holds one.
   """
 
   @file_name "connections.yaml"
-  @types %{"postgres" => ~w(host database username), "sqlite" => ~w(path)}
+  @types [
+    {"postgres", ~w(host database username)},
+    {"mysql", ~w(host database username)},
+    {"sqlserver", ~w(host database username)},
+    {"sqlite", ~w(path)},
+    {"s3", ~w(key_id secret_env)},
+    {"gcs", ~w(key_id secret_env)},
+    {"azure", ~w(connection_string_env)}
+  ]
+  @required Map.new(@types)
+  # Secrets someone may try to save in place of the variable that holds them.
+  @secrets ~w(secret connection_string session_token)
+
+  @doc "The connection types, in the order an editor lists them."
+  @spec types() :: [String.t()]
+  def types, do: Enum.map(@types, &elem(&1, 0))
 
   @type connection :: %{String.t() => term()}
 
@@ -54,18 +77,31 @@ defmodule IxpipeCore.Connections do
 
   @doc "The password for `conn`, from the environment variable its `password_env` names."
   @spec password(connection()) :: {:ok, String.t() | nil} | {:error, String.t()}
-  def password(%{"password_env" => var} = conn) when is_binary(var) and var != "" do
-    case System.get_env(var) do
-      nil ->
-        {:error,
-         "Set the environment variable #{var} to the password for connection #{conn["name"]}"}
+  def password(conn), do: secret(conn, "password_env")
 
-      password ->
-        {:ok, password}
+  @doc """
+  The secret for `conn` from the environment variable its setting `key`
+  (`password_env`, `secret_env`, …) names; nil when the setting is absent.
+  """
+  @spec secret(connection(), String.t()) :: {:ok, String.t() | nil} | {:error, String.t()}
+  def secret(conn, key) do
+    case conn[key] do
+      var when is_binary(var) and var != "" ->
+        case System.get_env(var) do
+          nil ->
+            what = key |> String.replace_suffix("_env", "") |> String.replace("_", " ")
+
+            {:error,
+             "Set the environment variable #{var} to the #{what} for connection #{conn["name"]}"}
+
+          value ->
+            {:ok, value}
+        end
+
+      _ ->
+        {:ok, nil}
     end
   end
-
-  def password(_conn), do: {:ok, nil}
 
   defp check(conn) do
     cond do
@@ -73,16 +109,20 @@ defmodule IxpipeCore.Connections do
         {:error,
          "Passwords aren't saved. Put the password in an environment variable and set password_env to its name"}
 
+      Enum.any?(@secrets, &Map.has_key?(conn, &1)) ->
+        {:error,
+         "Secrets aren't saved. Put the secret in an environment variable and set the setting ending in _env to its name"}
+
       blank?(conn["name"]) ->
         {:error, "Give the connection a name"}
 
-      not Map.has_key?(@types, conn["type"]) ->
-        {:error, "Choose a connection type: postgres or sqlite"}
+      not Map.has_key?(@required, conn["type"]) ->
+        {:error, "Choose a connection type: " <> join(types(), "or")}
 
-      Enum.any?(@types[conn["type"]], &blank?(conn[&1])) ->
-        case @types[conn["type"]] do
-          [only] -> {:error, "A #{conn["type"]} connection needs a #{only}"}
-          keys -> {:error, "A #{conn["type"]} connection needs #{join(keys)}"}
+      Enum.any?(@required[conn["type"]], &blank?(conn[&1])) ->
+        case @required[conn["type"]] do
+          [only] -> {:error, "#{article(conn["type"])} connection needs a #{only}"}
+          keys -> {:error, "#{article(conn["type"])} connection needs #{join(keys, "and")}"}
         end
 
       true ->
@@ -90,11 +130,15 @@ defmodule IxpipeCore.Connections do
     end
   end
 
+  defp article(type) when type in ~w(s3 azure), do: "An #{type}"
+  defp article(type), do: "A #{type}"
+
   defp blank?(value), do: value in [nil, ""]
 
-  defp join(keys) do
-    {init, [last]} = Enum.split(keys, -1)
-    Enum.join(init, ", ") <> " and " <> last
+  @doc false
+  def join(words, conjunction) do
+    {init, [last]} = Enum.split(words, -1)
+    Enum.join(init, ", ") <> " #{conjunction} " <> last
   end
 
   # JSON is YAML, and Jason quotes every string safely.

@@ -18,6 +18,7 @@ defmodule IxpipeCore.Tools.InputSqlite do
         key: "connection",
         label: "Connection",
         type: :string,
+        kinds: ["sqlite"],
         optional: true,
         hint: "A saved SQLite connection, or choose a file below"
       },
