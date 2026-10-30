@@ -34,6 +34,7 @@ defmodule IxpipeApp.MainView do
       rows: %{},
       previews: %{},
       selected: nil,
+      output: nil,
       drafts: %{},
       errors: %{},
       formula_rows: 1
@@ -100,9 +101,10 @@ defmodule IxpipeApp.MainView do
             scrolls to every one. --%>
           <div class="absolute left-[0px] top-[0px] size-full overflow-scroll" aria-label="Canvas">
           <div class={"relative #{surface(@spec)}"} aria-label="Canvas surface">
-          <line :for={{from, to, slot} <- edges(@spec)} curve x1={from.position["x"] + node_width()}
-            y1={from.position["y"] + port_y()} x2={to.position["x"]}
-            y2={to.position["y"] + port_y() + 12 * slot} class="stroke-muted-foreground" />
+          <line :for={{from, to, out_slot, in_slot} <- edges(@spec)} curve
+            x1={from.position["x"] + node_width()} y1={from.position["y"] + port_y() + 12 * out_slot}
+            x2={to.position["x"]} y2={to.position["y"] + port_y() + 12 * in_slot}
+            class="stroke-muted-foreground" />
           <div :for={node <- @spec.nodes} aria-label={node.id} phx-drag="move" phx-value-id={node.id}
             class={"absolute left-[#{node.position["x"]}px] top-[#{node.position["y"]}px] w-[#{node_width()}px] flex-col gap-2 p-3 rounded-md border " <> card_state(node.id, @selected, @from)}>
             <div class="flex-row items-center justify-between gap-2">
@@ -115,13 +117,17 @@ defmodule IxpipeApp.MainView do
               <.caption>{tool_label(Tools.name(node.tool))}</.caption>
               <.status_badge :if={@rows[node.id]} tone={:success}>{plural(@rows[node.id], "row")}</.status_badge>
             </div>
+            <div :if={multi?(node)} class="flex-row flex-wrap gap-1">
+              <.status_badge :for={out <- Tools.outputs(node.tool)} :if={@rows["#{node.id}.#{out}"]}
+                tone={:success}>{out} · {plural(@rows["#{node.id}.#{out}"], "row")}</.status_badge>
+            </div>
             <div class="flex-row gap-1">
               <.button :for={port <- node.tool.inputs()} size={:sm} phx-click="connect_to"
                 phx-value-id={node.id} phx-value-port={port} aria-label={"Connect to #{node.id} #{port}"}>
                 {port}
               </.button>
-              <.button size={:sm} phx-click="connect_from" phx-value-id={node.id}
-                aria-label={"Connect from #{node.id}"}>out</.button>
+              <.button :for={{out, ref, label} <- connectors(node)} size={:sm} phx-click="connect_from"
+                phx-value-from={ref} aria-label={label}>{out}</.button>
             </div>
           </div>
           </div>
@@ -133,7 +139,8 @@ defmodule IxpipeApp.MainView do
           </div>
         </div>
         <div class="h-px w-full bg-border" />
-        <.results node={@node} preview={@node && @previews[@node.id]} />
+        <.results node={@node} output={@node && output_key(@node, @output)}
+          preview={@node && @previews[output_key(@node, @output)]} />
         </div>
         <div class="w-px h-full bg-border" />
         <.properties node={@node} drafts={@drafts} errors={@errors} formula_rows={@formula_rows} />
@@ -209,15 +216,20 @@ defmodule IxpipeApp.MainView do
     {:noreply, if(assigns.selected == id, do: select(assigns, nil), else: assigns)}
   end
 
-  def handle_event("connect_from", %{"id" => id}, assigns) do
-    status = {:info, "Connecting from #{id}", "Choose an input on another node."}
-    {:noreply, %{assigns | from: id, status: status}}
+  def handle_event("connect_from", %{"from" => from}, assigns) do
+    status = {:info, "Connecting from #{from}", "Choose an input on another node."}
+    {:noreply, %{assigns | from: from, status: status}}
   end
 
   def handle_event("connect_to", %{"id" => id, "port" => port}, %{from: from} = assigns)
-      when is_binary(from) and from != id do
-    {:noreply, edit(assigns, &Edit.connect(&1, from, id, port))}
+      when is_binary(from) do
+    if elem(Spec.source(from), 0) == id,
+      do: {:noreply, assigns},
+      else: {:noreply, edit(assigns, &Edit.connect(&1, from, id, port))}
   end
+
+  def handle_event("show_output", %{"output" => output}, assigns),
+    do: {:noreply, %{assigns | output: output}}
 
   def handle_event("connect_to", _values, assigns) do
     status = {:info, "Choose where the data comes from first.", "Press out on that node."}
@@ -287,7 +299,7 @@ defmodule IxpipeApp.MainView do
     do: %{assigns | spec: fun.(assigns.spec), from: nil, status: nil, rows: %{}, previews: %{}}
 
   defp select(assigns, id),
-    do: %{assigns | selected: id, drafts: %{}, errors: %{}, formula_rows: 1}
+    do: %{assigns | selected: id, output: nil, drafts: %{}, errors: %{}, formula_rows: 1}
 
   # Applies a setting typed or chosen in the properties panel. What was typed
   # stays as a draft, so the input never rewrites it; an invalid value shows
@@ -329,16 +341,37 @@ defmodule IxpipeApp.MainView do
   defp cell(value) when is_float(value), do: :erlang.float_to_binary(value, [:short])
   defp cell(value), do: to_string(value)
 
-  # Each edge with its input's slot on the target, so a join's left and
-  # right wires arrive one above the other.
+  # Each edge with the slot of the output it leaves and of the input it
+  # enters, so a filter's true and false wires, and a join's left and right
+  # inputs, sit one above the other.
   defp edges(spec) do
     by_id = Map.new(spec.nodes, &{&1.id, &1})
 
     for node <- spec.nodes,
-        {port, slot} <- Enum.with_index(node.tool.inputs()),
-        from = node.inputs[port],
-        by_id[from],
-        do: {by_id[from], node, slot}
+        {port, in_slot} <- Enum.with_index(node.tool.inputs()),
+        ref = node.inputs[port],
+        {from, output} = Spec.source(ref || ""),
+        source = by_id[from],
+        outputs = Tools.outputs(source.tool),
+        do: {source, node, Enum.find_index(outputs, &(&1 == output)) || 0, in_slot}
+  end
+
+  defp multi?(node), do: length(Tools.outputs(node.tool)) > 1
+
+  # A connector per output: `{label, wire source, accessible name}`.
+  defp connectors(node) do
+    case Tools.outputs(node.tool) do
+      [_] -> [{"out", node.id, "Connect from #{node.id}"}]
+      outs -> for out <- outs, do: {out, "#{node.id}.#{out}", "Connect from #{node.id} #{out}"}
+    end
+  end
+
+  # The run result Results shows for `node`: its own, or the chosen output.
+  defp output_key(node, chosen) do
+    case Tools.outputs(node.tool) do
+      [_] -> node.id
+      [first | _] = outs -> "#{node.id}.#{if chosen in outs, do: chosen, else: first}"
+    end
   end
 
   defp surface(spec) do
@@ -350,21 +383,33 @@ defmodule IxpipeApp.MainView do
     "w-[#{w}px] h-[#{h}px]"
   end
 
-  defp card_state(id, _selected, id), do: "border-primary bg-primary/12"
-  defp card_state(id, id, _from), do: "border-primary bg-background"
-  defp card_state(_id, _selected, _from), do: "border-border bg-background"
+  defp card_state(id, selected, from) do
+    cond do
+      from && elem(Spec.source(from), 0) == id -> "border-primary bg-primary/12"
+      selected == id -> "border-primary bg-background"
+      true -> "border-border bg-background"
+    end
+  end
 
   ## Panels
 
   attr(:node, :map, default: nil)
   attr(:preview, :map, default: nil)
+  attr(:output, :string, default: nil)
 
   defp results(assigns) do
     ~H"""
     <section class="flex-col gap-2 p-4 h-[240px]" aria-label="Results">
       <div class="flex-row items-center gap-2">
         <.section>Results</.section>
-        <.caption :if={@preview}>{@node.id} · {plural(@preview.total, "row")}{if @preview.total > length(@preview.rows), do: ", first #{length(@preview.rows)} shown"}</.caption>
+        <.caption :if={@preview}>{@output} · {plural(@preview.total, "row")}{if @preview.total > length(@preview.rows), do: ", first #{length(@preview.rows)} shown"}</.caption>
+      </div>
+      <div :if={@node && multi?(@node)} class="flex-row gap-1">
+        <.button :for={out <- Tools.outputs(@node.tool)} size={:sm} phx-click="show_output"
+          phx-value-output={out} aria-label={"Show #{out} output"}
+          class={if @output == "#{@node.id}.#{out}", do: "border-primary bg-primary/12", else: ""}>
+          {out}
+        </.button>
       </div>
       <.caption :if={!@node}>Select a tool to see its results.</.caption>
       <.caption :if={@node && !@preview}>Run the workflow to see this tool's results.</.caption>
