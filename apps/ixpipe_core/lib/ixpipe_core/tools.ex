@@ -9,7 +9,10 @@ defmodule IxpipeCore.Tools do
     "formula" => IxpipeCore.Tools.Formula,
     "sort" => IxpipeCore.Tools.Sort,
     "join" => IxpipeCore.Tools.Join,
-    "summarize" => IxpipeCore.Tools.Summarize
+    "summarize" => IxpipeCore.Tools.Summarize,
+    "union" => IxpipeCore.Tools.Union,
+    "sample" => IxpipeCore.Tools.Sample,
+    "unique" => IxpipeCore.Tools.Unique
   }
 
   @spec lookup(term()) :: module() | nil
@@ -19,4 +22,12 @@ defmodule IxpipeCore.Tools do
 
   @spec name(module()) :: String.t()
   def name(module), do: Map.fetch!(@names, module)
+
+  @doc "Every tool name, sorted."
+  @spec names() :: [String.t()]
+  def names, do: @tools |> Map.keys() |> Enum.sort()
+
+  @doc "The config keys `tool` cannot run without: its non-optional fields."
+  @spec required(module()) :: [String.t()]
+  def required(tool), do: for(field <- tool.fields(), !field[:optional], do: field.key)
 end

@@ -6,7 +6,11 @@ defmodule IxpipeCore.Tools.Sort do
   def inputs, do: ["in"]
 
   @impl true
-  def required_config, do: ["by"]
+  def fields,
+    do: [
+      %{key: "by", label: "Sort by", type: :list, hint: "Comma-separated columns"},
+      %{key: "desc", label: "Descending", type: :bool, optional: true}
+    ]
 
   @impl true
   def run(%{"in" => df}, %{"by" => by} = config) do

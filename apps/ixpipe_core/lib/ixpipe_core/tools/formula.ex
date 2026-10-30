@@ -12,7 +12,15 @@ defmodule IxpipeCore.Tools.Formula do
   def inputs, do: ["in"]
 
   @impl true
-  def required_config, do: ["formulas"]
+  def fields,
+    do: [
+      %{
+        key: "formulas",
+        label: "Formulas",
+        type: :formulas,
+        hint: "One per line: name = expression, e.g. taxed = amount * 1.1"
+      }
+    ]
 
   @impl true
   def run(%{"in" => df}, %{"formulas" => formulas}) do

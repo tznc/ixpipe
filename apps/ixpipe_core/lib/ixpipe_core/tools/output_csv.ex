@@ -6,7 +6,8 @@ defmodule IxpipeCore.Tools.OutputCsv do
   def inputs, do: ["in"]
 
   @impl true
-  def required_config, do: ["path"]
+  def fields,
+    do: [%{key: "path", label: "File", type: :path, hint: "Where to write the CSV"}]
 
   @impl true
   def run(%{"in" => df}, %{"path" => path}) do

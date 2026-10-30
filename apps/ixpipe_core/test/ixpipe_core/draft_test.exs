@@ -91,6 +91,23 @@ defmodule IxpipeCore.DraftTest do
       assert Enum.find(spec.nodes, &(&1.id == "select_1")).inputs == %{"in" => "sorted"}
     end
 
+    test "set_config/4 parses text with the tool's field and stores it", %{spec: spec} do
+      assert {:ok, spec} = Edit.set_config(spec, "sorted", "by", "amount, id")
+      assert {:ok, spec} = Edit.set_config(spec, "sorted", "desc", "false")
+      sorted = Enum.find(spec.nodes, &(&1.id == "sorted"))
+      assert sorted.config == %{"by" => ["amount", "id"], "desc" => false}
+    end
+
+    test "set_config/4 removes an optional setting set to empty", %{spec: spec} do
+      assert {:ok, spec} = Edit.set_config(spec, "sorted", "desc", "")
+      assert Enum.find(spec.nodes, &(&1.id == "sorted")).config == %{"by" => ["amount"]}
+    end
+
+    test "set_config/4 reports bad text and unknown settings", %{spec: spec} do
+      assert Edit.set_config(spec, "sorted", "by", "") == {:error, "Required"}
+      assert Edit.set_config(spec, "sorted", "nope", "x") == {:error, "Unknown setting"}
+    end
+
     test "remove_node/2 drops the node and every input that pointed at it", %{spec: spec} do
       spec = Edit.remove_node(spec, "orders")
       assert [%{id: "sorted", inputs: %{}}] = spec.nodes

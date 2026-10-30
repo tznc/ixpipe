@@ -11,7 +11,17 @@ defmodule IxpipeCore.Tools.Join do
   def inputs, do: ["left", "right"]
 
   @impl true
-  def required_config, do: ["on"]
+  def fields,
+    do: [
+      %{key: "on", label: "Join on", type: :list, hint: "Columns both inputs share"},
+      %{
+        key: "how",
+        label: "Join type",
+        type: :choice,
+        options: ["inner", "left", "outer", "cross"],
+        optional: true
+      }
+    ]
 
   @impl true
   def run(%{"left" => left, "right" => right}, %{"on" => on} = config) do

@@ -92,4 +92,54 @@ defmodule IxpipeCore.RunTest do
     assert {:error, {:node_failed, "orders", message}} = IxpipeCore.run(spec)
     assert message =~ "nonexistent.csv"
   end
+
+  test "union stacks rows from a and b" do
+    results =
+      run!("""
+      nodes:
+        - {id: x, tool: input_csv, config: {path: #{@fixtures}/orders.csv}}
+        - {id: y, tool: input_csv, config: {path: #{@fixtures}/orders.csv}}
+        - {id: both, tool: union, inputs: {a: x, b: y}}
+      """)
+
+    assert DF.n_rows(results["both"]) == 8
+  end
+
+  test "sample keeps the first or last n rows" do
+    results =
+      run!("""
+      nodes:
+        - {id: orders, tool: input_csv, config: {path: #{@fixtures}/orders.csv}}
+        - {id: head, tool: sample, inputs: {in: orders}, config: {n: 2}}
+        - {id: tail, tool: sample, inputs: {in: orders}, config: {n: 1, from: last}}
+      """)
+
+    assert DF.to_columns(results["head"])["id"] == [1, 2]
+    assert DF.to_columns(results["tail"])["id"] == [4]
+  end
+
+  test "unique drops duplicate rows, or rows repeating the given columns" do
+    results =
+      run!("""
+      nodes:
+        - {id: orders, tool: input_csv, config: {path: #{@fixtures}/orders.csv}}
+        - {id: twice, tool: union, inputs: {a: orders, b: orders}}
+        - {id: rows, tool: unique, inputs: {in: twice}}
+        - {id: customers, tool: unique, inputs: {in: orders}, config: {columns: [customer_id]}}
+      """)
+
+    assert DF.n_rows(results["rows"]) == 4
+    assert DF.to_columns(results["customers"])["id"] == [1, 2, 4]
+  end
+
+  test "a node can read the same input on two ports" do
+    results =
+      run!("""
+      nodes:
+        - {id: orders, tool: input_csv, config: {path: #{@fixtures}/orders.csv}}
+        - {id: self, tool: join, inputs: {left: orders, right: orders}, config: {on: [id]}}
+      """)
+
+    assert DF.n_rows(results["self"]) == 4
+  end
 end

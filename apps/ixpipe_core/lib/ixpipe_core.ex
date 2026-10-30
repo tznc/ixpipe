@@ -31,8 +31,12 @@ defmodule IxpipeCore do
   def to_runic(%Spec{} = spec) do
     Enum.reduce(spec.nodes, Runic.workflow(name: spec.name || "ixpipe"), fn node, wrk ->
       ports = node.tool.inputs()
+      # A Runic join never fires on a repeated parent, so each parent feeds
+      # the step once and `slots` maps every port to its parent's argument.
       parents = Enum.map(ports, &node.inputs[&1])
-      Workflow.add(wrk, step(node, ports), add_opts(parents))
+      unique = Enum.uniq(parents)
+      slots = Enum.zip(ports, Enum.map(parents, fn p -> Enum.find_index(unique, &(&1 == p)) end))
+      Workflow.add(wrk, step(node, slots, length(unique)), add_opts(unique))
     end)
   end
 
@@ -42,18 +46,21 @@ defmodule IxpipeCore do
 
   # Runic hashes a step from its fn and bound variables, so `id` sits inside
   # each fn: nodes with the same tool and config stay distinct steps.
-  defp step(%{id: id, tool: tool, config: config}, ports) do
-    case ports do
-      [] ->
-        Runic.step(fn _ -> run_tool(id, tool, %{}, config) end, name: id)
+  defp step(%{id: id, tool: tool, config: config}, slots, arity) do
+    case arity do
+      0 ->
+        Runic.step(fn _ -> run_tool(id, tool, inputs(slots, []), config) end, name: id)
 
-      [a] ->
-        Runic.step(fn x -> run_tool(id, tool, %{a => x}, config) end, name: id)
+      1 ->
+        Runic.step(fn x -> run_tool(id, tool, inputs(slots, [x]), config) end, name: id)
 
-      [a, b] ->
-        Runic.step(fn x, y -> run_tool(id, tool, %{a => x, b => y}, config) end, name: id)
+      2 ->
+        Runic.step(fn x, y -> run_tool(id, tool, inputs(slots, [x, y]), config) end, name: id)
     end
   end
+
+  @doc false
+  def inputs(slots, args), do: Map.new(slots, fn {port, i} -> {port, Enum.at(args, i)} end)
 
   # A failure is passed downstream as a value, so the run still settles and
   # reports the node that raised.

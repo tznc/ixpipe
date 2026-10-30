@@ -174,7 +174,7 @@ defmodule IxpipeCore.Spec do
 
   defp check_config(nodes) do
     Enum.find_value(nodes, :ok, fn node ->
-      case Enum.reject(node.tool.required_config(), &Map.has_key?(node.config, &1)) do
+      case Enum.reject(IxpipeCore.Tools.required(node.tool), &Map.has_key?(node.config, &1)) do
         [] -> nil
         missing -> {:error, {:missing_config, node.id, missing}}
       end

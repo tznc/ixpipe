@@ -32,6 +32,28 @@ defmodule IxpipeCore.Edit do
   def connect(spec, from, to, port),
     do: update(spec, to, &%{&1 | inputs: Map.put(&1.inputs, port, from)})
 
+  @doc """
+  Sets the setting `key` of node `id` from typed `text`, read with the
+  tool's field for it (see `IxpipeCore.Config`). Empty text removes an
+  optional setting.
+  """
+  @spec set_config(Spec.t(), String.t(), String.t(), String.t()) ::
+          {:ok, Spec.t()} | {:error, String.t()}
+  def set_config(spec, id, key, text) do
+    with %Spec.Node{tool: tool} <- Enum.find(spec.nodes, &(&1.id == id)),
+         %{} = field <- Enum.find(tool.fields(), &(&1.key == key)),
+         {:ok, value} <- IxpipeCore.Config.parse(field, text) do
+      config = fn config ->
+        if value == nil, do: Map.delete(config, key), else: Map.put(config, key, value)
+      end
+
+      {:ok, update(spec, id, &%{&1 | config: config.(&1.config)})}
+    else
+      {:error, message} -> {:error, message}
+      nil -> {:error, "Unknown setting"}
+    end
+  end
+
   @doc "Removes node `id` and disconnects every input that read from it."
   @spec remove_node(Spec.t(), String.t()) :: Spec.t()
   def remove_node(spec, id) do

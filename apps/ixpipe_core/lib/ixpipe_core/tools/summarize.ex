@@ -16,11 +16,23 @@ defmodule IxpipeCore.Tools.Summarize do
     "n_distinct" => &Series.n_distinct/1
   }
 
+  @doc "The aggregate ops, by name."
+  def ops, do: ~w(sum mean min max count n_distinct)
+
   @impl true
   def inputs, do: ["in"]
 
   @impl true
-  def required_config, do: ["group_by", "aggregates"]
+  def fields,
+    do: [
+      %{key: "group_by", label: "Group by", type: :list, hint: "Comma-separated columns"},
+      %{
+        key: "aggregates",
+        label: "Aggregates",
+        type: :aggregates,
+        hint: "e.g. sum(amount) as total, count(id) as orders"
+      }
+    ]
 
   @impl true
   def run(%{"in" => df}, %{"group_by" => group_by, "aggregates" => aggregates}) do
