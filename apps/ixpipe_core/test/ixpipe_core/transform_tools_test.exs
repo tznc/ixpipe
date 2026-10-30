@@ -2,18 +2,25 @@ defmodule IxpipeCore.TransformToolsTest do
   # Alteryx's reshaping and parsing tools: Cross Tab, Transpose, Text To
   # Columns, RegEx and Data Cleansing.
   use ExUnit.Case, async: true
-  alias Explorer.DataFrame, as: DF
-  alias IxpipeCore.Tools
+  alias IxpipeCore.{Context, Table, Tools}
   alias IxpipeCore.Tools.{CrossTab, DataCleansing, Regex, TextToColumns, Transpose}
 
-  defp sorted(df, by),
-    do: df |> DF.sort_with(fn ldf -> Enum.map(by, &ldf[&1]) end) |> DF.to_columns()
+  setup do
+    %{ctx: Context.new()}
+  end
+
+  defp cols(t), do: Table.to_columns(t)
+
+  defp sorted(t, by) do
+    order = Enum.map_join(by, ", ", &IxpipeCore.Duck.ident/1)
+    t.db |> Table.sql("sorted", "SELECT * FROM #{Table.ref(t)} ORDER BY #{order}") |> cols()
+  end
 
   describe "cross tab" do
-    setup do
+    setup %{ctx: ctx} do
       %{
-        df:
-          DF.new(
+        t:
+          Table.new(ctx.db, "src",
             region: ["N", "N", "S", "S", "N"],
             month: ["jan", "feb", "jan", "feb", "jan"],
             sales: [1, 2, 3, 4, 5]
@@ -21,16 +28,17 @@ defmodule IxpipeCore.TransformToolsTest do
       }
     end
 
-    test "turns a column's values into columns, summing by default", %{df: df} do
+    test "turns a column's values into columns, summing by default", %{t: t, ctx: ctx} do
       out =
-        CrossTab.run(%{"in" => df}, %{
-          "group_by" => ["region"],
-          "header" => "month",
-          "value" => "sales"
-        })
+        CrossTab.run(
+          %{"in" => t},
+          %{"group_by" => ["region"], "header" => "month", "value" => "sales"},
+          ctx
+        )
 
-      assert Enum.sort(DF.names(out)) == ["feb", "jan", "region"]
+      assert Enum.sort(Table.columns(out)) == ["feb", "jan", "region"]
 
+      # DuckDB's sum of a BIGINT is a HUGEINT; the values still come back as integers.
       assert sorted(out, ["region"]) == %{
                "region" => ["N", "S"],
                "jan" => [6, 3],
@@ -38,16 +46,20 @@ defmodule IxpipeCore.TransformToolsTest do
              }
     end
 
-    test "aggregates with the chosen method; missing cells are empty", %{df: df} do
-      df = DF.concat_rows(df, DF.new(region: ["E"], month: ["jan"], sales: [9]))
+    test "aggregates with the chosen method; missing cells are empty", %{t: t, ctx: ctx} do
+      Table.exec!(ctx.db, "INSERT INTO #{Table.ref(t)} VALUES ('E', 'jan', 9)")
 
       out =
-        CrossTab.run(%{"in" => df}, %{
-          "group_by" => ["region"],
-          "header" => "month",
-          "value" => "sales",
-          "method" => "count"
-        })
+        CrossTab.run(
+          %{"in" => t},
+          %{
+            "group_by" => ["region"],
+            "header" => "month",
+            "value" => "sales",
+            "method" => "count"
+          },
+          ctx
+        )
 
       assert sorted(out, ["region"]) == %{
                "region" => ["E", "N", "S"],
@@ -56,22 +68,26 @@ defmodule IxpipeCore.TransformToolsTest do
              }
     end
 
-    test "numeric header values become column names" do
-      df = DF.new(id: [1, 1], year: [2024, 2025], v: [1.5, 2.5])
+    test "numeric header values become column names", %{ctx: ctx} do
+      t = Table.new(ctx.db, "src", id: [1, 1], year: [2024, 2025], v: [1.5, 2.5])
 
       out =
-        CrossTab.run(%{"in" => df}, %{"group_by" => ["id"], "header" => "year", "value" => "v"})
+        CrossTab.run(
+          %{"in" => t},
+          %{"group_by" => ["id"], "header" => "year", "value" => "v"},
+          ctx
+        )
 
-      assert DF.to_columns(out) == %{"id" => [1], "2024" => [1.5], "2025" => [2.5]}
+      assert cols(out) == %{"id" => [1], "2024" => [1.5], "2025" => [2.5]}
     end
   end
 
   describe "transpose" do
-    test "turns columns into name and value rows, keeping the key columns" do
-      df = DF.new(id: [1, 2], q1: [10, 20], q2: [30, 40])
-      out = Transpose.run(%{"in" => df}, %{"keys" => ["id"]})
+    test "turns columns into name and value rows, keeping the key columns", %{ctx: ctx} do
+      t = Table.new(ctx.db, "src", id: [1, 2], q1: [10, 20], q2: [30, 40])
+      out = Transpose.run(%{"in" => t}, %{"keys" => ["id"]}, ctx)
 
-      assert DF.names(out) == ["id", "name", "value"]
+      assert Table.columns(out) == ["id", "name", "value"]
 
       assert sorted(out, ["id", "name"]) == %{
                "id" => [1, 1, 2, 2],
@@ -80,11 +96,11 @@ defmodule IxpipeCore.TransformToolsTest do
              }
     end
 
-    test "only the chosen data columns; mixed types become text" do
-      df = DF.new(id: [1], city: ["Oslo"], pop: [700], area: [454.0])
-      out = Transpose.run(%{"in" => df}, %{"keys" => ["id"], "columns" => ["city", "pop"]})
+    test "only the chosen data columns; mixed types become text", %{ctx: ctx} do
+      t = Table.new(ctx.db, "src", id: [1], city: ["Oslo"], pop: [700], area: [454.0])
+      out = Transpose.run(%{"in" => t}, %{"keys" => ["id"], "columns" => ["city", "pop"]}, ctx)
 
-      assert DF.to_columns(out) == %{
+      assert cols(out) == %{
                "id" => [1, 1],
                "name" => ["city", "pop"],
                "value" => ["Oslo", "700"]
@@ -93,134 +109,198 @@ defmodule IxpipeCore.TransformToolsTest do
   end
 
   describe "text to columns" do
-    setup do
-      %{df: DF.new(id: [1, 2, 3], name: ["Ada Lovelace", "Bob", "Grace Brewster Hopper"])}
+    setup %{ctx: ctx} do
+      %{
+        t:
+          Table.new(ctx.db, "src",
+            id: [1, 2, 3],
+            name: ["Ada Lovelace", "Bob", "Grace Brewster Hopper"]
+          )
+      }
     end
 
-    test "splits into as many columns as the most parts", %{df: df} do
-      out = TextToColumns.run(%{"in" => df}, %{"column" => "name", "delimiter" => " "})
-      assert DF.names(out) == ["id", "name", "name_1", "name_2", "name_3"]
-      cols = DF.to_columns(out)
+    test "splits into as many columns as the most parts", %{t: t, ctx: ctx} do
+      out = TextToColumns.run(%{"in" => t}, %{"column" => "name", "delimiter" => " "}, ctx)
+      assert Table.columns(out) == ["id", "name", "name_1", "name_2", "name_3"]
+      cols = cols(out)
       assert cols["name_1"] == ["Ada", "Bob", "Grace"]
       assert cols["name_2"] == ["Lovelace", nil, "Brewster"]
       assert cols["name_3"] == [nil, nil, "Hopper"]
     end
 
-    test "a column count keeps the rest in the last column", %{df: df} do
+    test "a column count keeps the rest in the last column", %{t: t, ctx: ctx} do
       out =
-        TextToColumns.run(%{"in" => df}, %{"column" => "name", "delimiter" => " ", "columns" => 2})
+        TextToColumns.run(
+          %{"in" => t},
+          %{"column" => "name", "delimiter" => " ", "columns" => 2},
+          ctx
+        )
 
-      assert DF.to_columns(out)["name_2"] == ["Lovelace", nil, "Brewster Hopper"]
-      refute "name_3" in DF.names(out)
+      assert cols(out)["name_2"] == ["Lovelace", nil, "Brewster Hopper"]
+      refute "name_3" in Table.columns(out)
     end
 
-    test "splits into rows", %{df: df} do
+    test "splits into rows", %{t: t, ctx: ctx} do
       out =
-        TextToColumns.run(%{"in" => df}, %{
-          "column" => "name",
-          "delimiter" => " ",
-          "split_to" => "rows"
-        })
+        TextToColumns.run(
+          %{"in" => t},
+          %{"column" => "name", "delimiter" => " ", "split_to" => "rows"},
+          ctx
+        )
 
-      assert DF.to_columns(out) == %{
+      assert cols(out) == %{
                "id" => [1, 1, 2, 3, 3, 3],
                "name" => ["Ada", "Lovelace", "Bob", "Grace", "Brewster", "Hopper"]
+             }
+    end
+
+    test "nulls stay null", %{ctx: ctx} do
+      t = Table.new(ctx.db, "src", name: ["a,b", nil])
+      out = TextToColumns.run(%{"in" => t}, %{"column" => "name", "delimiter" => ","}, ctx)
+
+      assert cols(out) == %{
+               "name" => ["a,b", nil],
+               "name_1" => ["a", nil],
+               "name_2" => ["b", nil]
              }
     end
   end
 
   describe "regex" do
-    setup do
-      %{df: DF.new(email: ["ada@x.com", "bob@y.org", "nope"])}
+    setup %{ctx: ctx} do
+      %{t: Table.new(ctx.db, "src", email: ["ada@x.com", "bob@y.org", "nope"])}
     end
 
-    test "parses named groups into columns", %{df: df} do
+    test "parses named groups into columns", %{t: t, ctx: ctx} do
       out =
-        Regex.run(%{"in" => df}, %{
-          "column" => "email",
-          "pattern" => "(?<user>[^@]+)@(?<domain>.+)"
-        })
+        Regex.run(
+          %{"in" => t},
+          %{"column" => "email", "pattern" => "(?<user>[^@]+)@(?<domain>.+)"},
+          ctx
+        )
 
-      cols = DF.to_columns(out)
+      assert Table.columns(out) == ["email", "user", "domain"]
+      cols = cols(out)
       assert cols["user"] == ["ada", "bob", nil]
       assert cols["domain"] == ["x.com", "y.org", nil]
     end
 
-    test "names unnamed groups after the column", %{df: df} do
-      out = Regex.run(%{"in" => df}, %{"column" => "email", "pattern" => "([^@]+)@(.+)"})
-      assert DF.to_columns(out)["email_2"] == ["x.com", "y.org", nil]
+    test "names unnamed groups after the column", %{t: t, ctx: ctx} do
+      out = Regex.run(%{"in" => t}, %{"column" => "email", "pattern" => "([^@]+)@(.+)"}, ctx)
+      assert Table.columns(out) == ["email", "email_1", "email_2"]
+      assert cols(out)["email_2"] == ["x.com", "y.org", nil]
     end
 
-    test "matches the whole value", %{df: df} do
+    test "matches the whole value", %{t: t, ctx: ctx} do
       out =
-        Regex.run(%{"in" => df}, %{"column" => "email", "pattern" => ".+@.+", "mode" => "match"})
+        Regex.run(
+          %{"in" => t},
+          %{"column" => "email", "pattern" => ".+@.+", "mode" => "match"},
+          ctx
+        )
 
-      assert DF.to_columns(out)["email_matched"] == [true, true, false]
+      assert cols(out)["email_matched"] == [true, true, false]
 
-      out = Regex.run(%{"in" => df}, %{"column" => "email", "pattern" => "@", "mode" => "match"})
-      assert DF.to_columns(out)["email_matched"] == [false, false, false]
-    end
-
-    test "replaces matches", %{df: df} do
       out =
-        Regex.run(%{"in" => df}, %{
-          "column" => "email",
-          "pattern" => "@.*",
-          "mode" => "replace",
-          "replacement" => ""
-        })
+        Regex.run(%{"in" => t}, %{"column" => "email", "pattern" => "@", "mode" => "match"}, ctx)
 
-      assert DF.to_columns(out)["email"] == ["ada", "bob", "nope"]
+      assert cols(out)["email_matched"] == [false, false, false]
     end
 
-    test "says when the pattern is wrong", %{df: df} do
-      assert_raise RuntimeError, ~r/Invalid pattern/, fn ->
-        Regex.run(%{"in" => df}, %{"column" => "email", "pattern" => "(unclosed"})
+    test "replaces matches", %{t: t, ctx: ctx} do
+      out =
+        Regex.run(
+          %{"in" => t},
+          %{"column" => "email", "pattern" => "@.*", "mode" => "replace", "replacement" => ""},
+          ctx
+        )
+
+      assert cols(out)["email"] == ["ada", "bob", "nope"]
+    end
+
+    test "replacements refer to groups with $1", %{t: t, ctx: ctx} do
+      out =
+        Regex.run(
+          %{"in" => t},
+          %{
+            "column" => "email",
+            "pattern" => "(\\w+)@(\\w+)",
+            "mode" => "replace",
+            "replacement" => "$2 at $1"
+          },
+          ctx
+        )
+
+      assert cols(out)["email"] == ["x at ada.com", "y at bob.org", "nope"]
+    end
+
+    test "says when the pattern is wrong", %{t: t, ctx: ctx} do
+      for mode <- ~w(parse match replace) do
+        assert_raise RuntimeError, ~r/Invalid pattern/, fn ->
+          Regex.run(
+            %{"in" => t},
+            %{"column" => "email", "pattern" => "(unclosed", "mode" => mode},
+            ctx
+          )
+        end
       end
     end
   end
 
   describe "data cleansing" do
-    setup do
+    setup %{ctx: ctx} do
       %{
-        df:
-          DF.new(
+        t:
+          Table.new(ctx.db, "src",
             name: ["  ada  ", nil, "bob\t  smith", nil],
             n: [1, 2, 3, nil]
           )
       }
     end
 
-    test "by default trims text, and keeps nulls and rows", %{df: df} do
-      out = DataCleansing.run(%{"in" => df}, %{})
+    test "by default trims text, and keeps nulls and rows", %{t: t, ctx: ctx} do
+      out = DataCleansing.run(%{"in" => t}, %{}, ctx)
 
-      assert DF.to_columns(out) == %{
+      assert cols(out) == %{
                "name" => ["ada", nil, "bob\t  smith", nil],
                "n" => [1, 2, 3, nil]
              }
     end
 
-    test "every option", %{df: df} do
+    test "every option", %{t: t, ctx: ctx} do
       out =
-        DataCleansing.run(%{"in" => df}, %{
-          "remove_null_rows" => true,
-          "replace_nulls" => true,
-          "collapse_whitespace" => true,
-          "case" => "title"
-        })
+        DataCleansing.run(
+          %{"in" => t},
+          %{
+            "remove_null_rows" => true,
+            "replace_nulls" => true,
+            "collapse_whitespace" => true,
+            "case" => "title"
+          },
+          ctx
+        )
 
-      assert DF.to_columns(out) == %{"name" => ["Ada", "", "Bob Smith"], "n" => [1, 2, 3]}
+      assert cols(out) == %{"name" => ["Ada", "", "Bob Smith"], "n" => [1, 2, 3]}
     end
 
-    test "only the chosen columns", %{df: df} do
-      out = DataCleansing.run(%{"in" => df}, %{"columns" => ["n"], "replace_nulls" => true})
-      assert DF.to_columns(out)["name"] == ["  ada  ", nil, "bob\t  smith", nil]
-      assert DF.to_columns(out)["n"] == [1, 2, 3, 0]
+    test "title case capitalises each word", %{ctx: ctx} do
+      t = Table.new(ctx.db, "src", name: ["mARY-jane o'neil", "élan  vital"])
+      out = DataCleansing.run(%{"in" => t}, %{"case" => "title"}, ctx)
+      assert cols(out)["name"] == ["Mary-Jane O'Neil", "Élan  Vital"]
     end
 
-    test "upper and lower case", %{df: df} do
-      assert DF.to_columns(DataCleansing.run(%{"in" => df}, %{"case" => "upper"}))["name"] ==
+    test "only the chosen columns", %{t: t, ctx: ctx} do
+      out = DataCleansing.run(%{"in" => t}, %{"columns" => ["n"], "replace_nulls" => true}, ctx)
+      assert cols(out)["name"] == ["  ada  ", nil, "bob\t  smith", nil]
+      assert cols(out)["n"] == [1, 2, 3, 0]
+    end
+
+    test "upper and lower case", %{t: t, ctx: ctx} do
+      assert cols(DataCleansing.run(%{"in" => t}, %{"case" => "upper"}, ctx))["name"] ==
                ["ADA", nil, "BOB\t  SMITH", nil]
+
+      assert cols(DataCleansing.run(%{"in" => t}, %{"case" => "lower"}, ctx))["name"] ==
+               ["ada", nil, "bob\t  smith", nil]
     end
   end
 
@@ -250,7 +330,7 @@ defmodule IxpipeCore.TransformToolsTest do
         - {id: wide, tool: cross_tab, inputs: {in: src}, config: {group_by: [customer_id], header: id, value: amount}}
       """)
 
-    assert {:ok, %{"wide" => df}} = IxpipeCore.run(spec)
-    assert DF.n_rows(df) == 3 and "customer_id" in DF.names(df)
+    assert {:ok, %{"wide" => t}} = IxpipeCore.run(spec)
+    assert Table.count(t) == 3 and "customer_id" in Table.columns(t)
   end
 end

@@ -7,7 +7,8 @@ defmodule IxpipeCore.Tools.TextToColumns do
   """
   @behaviour IxpipeCore.Tool
 
-  alias Explorer.{DataFrame, Series}
+  alias IxpipeCore.{Context, Table}
+  import IxpipeCore.Duck, only: [ident: 1, literal: 1]
 
   @impl true
   def inputs, do: ["in"]
@@ -35,29 +36,43 @@ defmodule IxpipeCore.Tools.TextToColumns do
     ]
 
   @impl true
-  def run(%{"in" => df}, %{"column" => column, "delimiter" => delimiter} = config) do
+  def run(%{"in" => t}, %{"column" => column, "delimiter" => delimiter} = config, ctx) do
+    parts = "string_split(#{ident(column)}, #{literal(delimiter)})"
+
     case config["split_to"] do
       "rows" ->
-        df
-        |> DataFrame.put(column, Series.split(df[column], delimiter))
-        |> DataFrame.explode(column)
+        # A null keeps its row, as one null part.
+        Context.sql(
+          ctx,
+          "SELECT * REPLACE (unnest(coalesce(#{parts}, [NULL])) AS #{ident(column)}) FROM #{Table.ref(t)}"
+        )
 
       _ ->
-        to_columns(df, column, delimiter, config["columns"])
+        to_columns(t, column, delimiter, parts, config["columns"], ctx)
     end
   end
 
-  defp to_columns(df, column, delimiter, limit) do
-    parts =
-      for value <- Series.to_list(df[column]) do
-        if value, do: String.split(value, delimiter, parts: limit || :infinity), else: []
+  defp to_columns(t, column, delimiter, parts, limit, ctx) do
+    n = limit || most_parts(t, parts)
+
+    new =
+      for i <- 1..n//1 do
+        part =
+          if i == limit,
+            do:
+              "CASE WHEN len(#{parts}) >= #{i} THEN array_to_string(list_slice(#{parts}, #{i}, len(#{parts})), #{literal(delimiter)}) END",
+            else: "#{parts}[#{i}]"
+
+        "#{part} AS #{ident("#{column}_#{i}")}"
       end
 
-    n = limit || parts |> Enum.map(&length/1) |> Enum.max(fn -> 0 end)
+    Context.sql(ctx, "SELECT #{Enum.join(["*" | new], ", ")} FROM #{Table.ref(t)}")
+  end
 
-    Enum.reduce(1..n//1, df, fn i, df ->
-      values = Enum.map(parts, &Enum.at(&1, i - 1))
-      DataFrame.put(df, "#{column}_#{i}", Series.from_list(values, dtype: :string))
-    end)
+  defp most_parts(t, parts) do
+    %{rows: [[n]]} =
+      Table.query!(t.db, "SELECT coalesce(max(len(#{parts})), 0) FROM #{Table.ref(t)}")
+
+    n
   end
 end

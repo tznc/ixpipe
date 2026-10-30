@@ -8,7 +8,8 @@ defmodule IxpipeCore.Tools.DataCleansing do
   """
   @behaviour IxpipeCore.Tool
 
-  alias Explorer.{DataFrame, Series}
+  alias IxpipeCore.{Context, Table}
+  import IxpipeCore.Duck, only: [ident: 1]
 
   @impl true
   def inputs, do: ["in"]
@@ -56,59 +57,70 @@ defmodule IxpipeCore.Tools.DataCleansing do
     ]
 
   @impl true
-  def run(%{"in" => df}, config) do
-    df = if config["remove_null_rows"], do: drop_empty_rows(df), else: df
-    columns = config["columns"] || DataFrame.names(df)
-    Enum.reduce(columns, df, &DataFrame.put(&2, &1, clean(&2[&1], config)))
+  def run(%{"in" => t}, config, ctx) do
+    types = Table.dtypes(t)
+    all = Table.columns(t)
+    columns = config["columns"] || all
+
+    cleaned =
+      columns
+      |> Enum.map(&{clean(ident(&1), types[&1], config), ident(&1)})
+      |> Enum.reject(fn {expr, c} -> expr == c end)
+      |> Enum.map(fn {expr, c} -> "#{expr} AS #{c}" end)
+
+    select = if cleaned == [], do: "*", else: "* REPLACE (#{Enum.join(cleaned, ", ")})"
+
+    where =
+      if config["remove_null_rows"],
+        do: " WHERE " <> Enum.map_join(all, " OR ", &"#{ident(&1)} IS NOT NULL"),
+        else: ""
+
+    Context.sql(ctx, "SELECT #{select} FROM #{Table.ref(t)}#{where}")
   end
 
-  defp drop_empty_rows(df) do
-    DataFrame.filter_with(df, fn ldf ->
-      df
-      |> DataFrame.names()
-      |> Enum.map(&Series.is_not_nil(ldf[&1]))
-      |> Enum.reduce(&Series.or/2)
-    end)
-  end
+  # Whitespace, as Unicode has it.
+  @space ~S"[\s\p{Z}]"
 
-  defp clean(%Series{dtype: :string} = series, config) do
-    series
-    |> then(&if(Map.get(config, "trim", true), do: Series.strip(&1), else: &1))
-    |> then(&if(config["collapse_whitespace"], do: Series.re_replace(&1, "\\s+", " "), else: &1))
+  defp clean(c, "VARCHAR", config) do
+    c
+    |> then(
+      &if Map.get(config, "trim", true),
+        do: "regexp_replace(#{&1}, '^#{@space}+|#{@space}+$', '', 'g')",
+        else: &1
+    )
+    |> then(
+      &if config["collapse_whitespace"],
+        do: "regexp_replace(#{&1}, '#{@space}+', ' ', 'g')",
+        else: &1
+    )
     |> change_case(config["case"])
-    |> then(&if(config["replace_nulls"], do: Series.fill_missing(&1, ""), else: &1))
+    |> then(&if config["replace_nulls"], do: "coalesce(#{&1}, '')", else: &1)
   end
 
-  defp clean(series, config) do
-    if config["replace_nulls"] && Series.dtype(series) in numeric(),
-      do: Series.fill_missing(series, 0),
-      else: series
+  defp clean(c, type, config) do
+    if config["replace_nulls"] && numeric?(type), do: "coalesce(#{c}, 0)", else: c
   end
 
-  defp change_case(series, "upper"), do: Series.upcase(series)
-  defp change_case(series, "lower"), do: Series.downcase(series)
-  defp change_case(series, "title"), do: Series.transform(series, &title/1)
-  defp change_case(series, _), do: series
+  defp change_case(c, "upper"), do: "upper(#{c})"
+  defp change_case(c, "lower"), do: "lower(#{c})"
 
-  defp title(nil), do: nil
+  # Each run of letters after a non-word character (or at the start) gets a
+  # capital and lower case after it: split into (non-letters)(letters)
+  # tokens and capitalise the tokens whose non-letters end in one.
+  defp change_case(c, "title") do
+    """
+    array_to_string(list_transform(regexp_extract_all(#{c}, '\\P{L}*\\p{L}*'), lambda tok:
+      CASE WHEN regexp_matches(tok, '^(\\P{L}*[^\\p{L}\\p{N}\\p{M}_])?\\p{L}')
+        THEN regexp_extract(tok, '^\\P{L}*') || upper(regexp_extract(tok, '\\p{L}')) ||
+          lower(regexp_extract(tok, '^\\P{L}*\\p{L}(.*)', 1))
+        ELSE tok END), '')
+    """
+  end
 
-  defp title(text),
+  defp change_case(c, _), do: c
+
+  defp numeric?(type),
     do:
-      Regex.replace(~r/\b(\p{L})(\p{L}*)/u, text, fn _, a, b ->
-        String.upcase(a) <> String.downcase(b)
-      end)
-
-  defp numeric,
-    do: [
-      {:s, 8},
-      {:s, 16},
-      {:s, 32},
-      {:s, 64},
-      {:u, 8},
-      {:u, 16},
-      {:u, 32},
-      {:u, 64},
-      {:f, 32},
-      {:f, 64}
-    ]
+      type in ~w(TINYINT SMALLINT INTEGER BIGINT HUGEINT UTINYINT USMALLINT UINTEGER UBIGINT UHUGEINT FLOAT DOUBLE) or
+        String.starts_with?(type, "DECIMAL")
 end

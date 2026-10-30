@@ -6,15 +6,16 @@ defmodule IxpipeCore.Tools.CrossTab do
   """
   @behaviour IxpipeCore.Tool
 
-  alias Explorer.{DataFrame, Series}
+  alias IxpipeCore.{Context, Table}
+  import IxpipeCore.Duck, only: [ident: 1]
 
   @methods %{
-    "sum" => &Series.sum/1,
-    "mean" => &Series.mean/1,
-    "min" => &Series.min/1,
-    "max" => &Series.max/1,
-    "count" => &Series.count/1,
-    "first" => &Series.first/1
+    "sum" => "sum",
+    "mean" => "avg",
+    "min" => "min",
+    "max" => "max",
+    "count" => "count",
+    "first" => "first"
   }
 
   @impl true
@@ -42,14 +43,23 @@ defmodule IxpipeCore.Tools.CrossTab do
     ]
 
   @impl true
-  def run(%{"in" => df}, %{"group_by" => group_by, "header" => header, "value" => value} = config) do
+  def run(
+        %{"in" => t},
+        %{"group_by" => group_by, "header" => header, "value" => value} = config,
+        ctx
+      ) do
     aggregate = Map.fetch!(@methods, config["method"] || "sum")
-    # Column names are text, whatever the header column holds.
-    df = DataFrame.put(df, header, Series.cast(df[header], :string))
+    groups = Enum.map_join(group_by, ", ", &ident/1)
 
-    df
-    |> DataFrame.group_by(group_by ++ [header])
-    |> DataFrame.summarise_with(fn ldf -> [{value, aggregate.(ldf[value])}] end)
-    |> DataFrame.pivot_wider(header, value, id_columns: group_by)
+    # Aggregate first, then pivot each group's one value per header, so a
+    # missing combination is NULL (PIVOT's own count would give 0). Column
+    # names are text, whatever the header column holds.
+    Context.sql(ctx, """
+    PIVOT (
+      SELECT #{groups}, CAST(#{ident(header)} AS VARCHAR) AS __header,
+        #{aggregate}(#{ident(value)}) AS __value
+      FROM #{Table.ref(t)} GROUP BY ALL
+    ) ON __header USING first(__value) GROUP BY #{groups}
+    """)
   end
 end

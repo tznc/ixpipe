@@ -6,7 +6,8 @@ defmodule IxpipeCore.Tools.Transpose do
   """
   @behaviour IxpipeCore.Tool
 
-  alias Explorer.{DataFrame, Series}
+  alias IxpipeCore.{Context, Table}
+  import IxpipeCore.Duck, only: [ident: 1]
 
   @impl true
   def inputs, do: ["in"]
@@ -25,16 +26,22 @@ defmodule IxpipeCore.Tools.Transpose do
     ]
 
   @impl true
-  def run(%{"in" => df}, %{"keys" => keys} = config) do
-    columns = config["columns"] || DataFrame.names(df) -- keys
-    df = DataFrame.select(df, keys ++ columns)
+  def run(%{"in" => t}, %{"keys" => keys} = config, ctx) do
+    columns = config["columns"] || Table.columns(t) -- keys
+    types = Table.dtypes(t)
 
-    df =
-      case columns |> Enum.map(&Series.dtype(df[&1])) |> Enum.uniq() do
-        [_] -> df
-        _ -> Enum.reduce(columns, df, &DataFrame.put(&2, &1, Series.cast(&2[&1], :string)))
-      end
+    cast =
+      if columns |> Enum.map(&types[&1]) |> Enum.uniq() |> length() > 1,
+        do: &"CAST(#{ident(&1)} AS VARCHAR) AS #{ident(&1)}",
+        else: &ident/1
 
-    DataFrame.pivot_longer(df, columns, select: keys, names_to: "name", values_to: "value")
+    select = Enum.map(keys, &ident/1) ++ Enum.map(columns, cast)
+    on = Enum.map_join(columns, ", ", &ident/1)
+
+    # INCLUDE NULLS keeps empty cells as rows, as a pivot longer does.
+    Context.sql(ctx, """
+    SELECT * FROM (SELECT #{Enum.join(select, ", ")} FROM #{Table.ref(t)})
+    UNPIVOT INCLUDE NULLS (value FOR name IN (#{on}))
+    """)
   end
 end
