@@ -6,7 +6,8 @@ name: Android
 # on baguette's android.yml.
 #
 # Release.android/1 (baguette) cross-builds every dependency NIF for the ABI:
-# ixpipe_duckdb and ixpipe_sqlite (rusqlite, bundled SQLite), kept in
+# ixpipe_duckdb, ixpipe_sqlite (rusqlite, bundled SQLite) and ixpipe_python
+# (RustPython, the Python tool's sandbox: pure Rust), kept in
 # _build/prod/android/nifs and cached by mix.lock and the crates' sources.
 # DuckDB itself is never compiled here: ixpipe_duckdb links the libduckdb.so
 # that libduckdb-android.yml builds once per DuckDB version and publishes as
@@ -125,7 +126,7 @@ jobs:
           ls -l "$apk"
           # Each NIF ships under its library's own name, for this ABI only,
           # and DuckDB's library beside them.
-          for lib in libixpipe_duckdb.so libixpipe_sqlite.so libduckdb.so; do
+          for lib in libixpipe_duckdb.so libixpipe_sqlite.so libixpipe_python.so libduckdb.so; do
             unzip -l "$apk" | grep -q "lib/${{ matrix.jni }}/$lib" || { echo "::error::no lib/${{ matrix.jni }}/$lib in the APK"; exit 1; }
           done
           if unzip -l "$apk" | grep -E 'liblib|unknown-linux-gnu'; then

@@ -92,6 +92,10 @@ defmodule IxpipeApp.MainViewFuzzTest do
                "edge to a missing output #{ref} after #{inspect(trail)}"
       end
 
+      # A failed run's details belong to a node that is still there.
+      with {id, _message} <- assigns.failure,
+           do: assert(id in ids, "failure of a removed node #{id} after #{inspect(trail)}")
+
       assert {:ok, ^spec} = spec |> Spec.to_yaml() |> Spec.decode(),
              "YAML does not round-trip after #{inspect(trail)}"
 

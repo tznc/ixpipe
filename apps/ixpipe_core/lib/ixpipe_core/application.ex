@@ -8,8 +8,8 @@ defmodule IxpipeCore.Application do
   @impl true
   def start(_type, _args) do
     children = [
-      # Starts a worker by calling: IxpipeCore.Worker.start_link(arg)
-      # {IxpipeCore.Worker, arg}
+      # Runs Script tool workers apart from the run that called them.
+      {Task.Supervisor, name: IxpipeCore.TaskSupervisor}
     ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html

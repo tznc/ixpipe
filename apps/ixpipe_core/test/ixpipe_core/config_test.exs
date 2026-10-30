@@ -12,6 +12,13 @@ defmodule IxpipeCore.ConfigTest do
     end
   end
 
+  test "code keeps its indentation and lines, dropping trailing blank lines" do
+    code = "  if x:\n      y = 1\n\n"
+    assert Config.parse(field(:code), code) == {:ok, "  if x:\n      y = 1"}
+    assert Config.format(field(:code), "a\nb") == "a\nb"
+    assert Config.parse(field(:code), " \n ") == {:error, "Required"}
+  end
+
   test "lists are comma-separated" do
     assert Config.parse(field(:list), "id, amount ,, name") == {:ok, ["id", "amount", "name"]}
     assert Config.format(field(:list), ["id", "amount"]) == "id, amount"

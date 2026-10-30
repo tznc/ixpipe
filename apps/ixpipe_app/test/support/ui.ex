@@ -26,7 +26,14 @@ defmodule IxpipeApp.UI do
         do: el
       )
 
-  @tool_tabs ["In/Out tab", "Preparation tab", "Join tab", "Parse tab", "Transform tab"]
+  @tool_tabs [
+    "In/Out tab",
+    "Preparation tab",
+    "Join tab",
+    "Parse tab",
+    "Transform tab",
+    "Code tab"
+  ]
 
   @doc "Adds `tool` from the ribbon tab that holds it, as a user would."
   def add(window, tool) do

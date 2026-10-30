@@ -10,9 +10,10 @@ desktop and mobile app in Elixir, rendered by GPUI through
   - `IxpipeCore.Spec` parses YAML workflows: `decode/1` (drafts), `validate/1` (runnable DAG), `to_yaml/1`.
   - `IxpipeCore.Edit` applies canvas edits (add, move, connect, remove) to drafts.
   - `IxpipeCore.run/2` compiles a spec to a [Runic](https://hex.pm/packages/runic) workflow and runs it in a fresh in-memory DuckDB v2 database (`IxpipeCore.Duck`): Runic orchestrates the DAG, and each node's output is a table there (`IxpipeCore.Table`, named for the node: `id`, or `id.output`). Runic steps run concurrently, each on its own connection; past `memory_limit` DuckDB spills to disk.
+  - Code tools: `python` runs a script in `IxpipeCore.Python`, RustPython embedded as a NIF (`native/ixpipe_python`) and sandboxed: built without `host_env` (no os, files, sockets, ctypes), an import allow-list, and a watchdog for CPU time, memory and cancel. Desktop and Android. `script` runs code in a locally installed Python, Node, Ruby or PHP through [portals](https://hex.pm/packages/portals) (`IxpipeCore.Script`, runners in `priv/script/<language>`), unsandboxed and desktop only; rows go through JSON lines or Parquet files. Both have outputs `out` and `log` (stdout, stderr, warnings) and keep their code in the node's `code` config (`:code` field, a row per line in the panel).
   - Tools (`IxpipeCore.Tools.*`) implement `IxpipeCore.Tool` over tables: `inputs/0`, `fields/0` (the settings schema the properties panel renders; `IxpipeCore.Config` parses and formats each type) and `run/3` (`inputs, config, %IxpipeCore.Context{}`), mostly SQL through `Context.sql/3`. Expressions in Filter and Formula are DuckDB SQL. Register new ones in `IxpipeCore.Tools` and in a ribbon group (`@ribbon`) in `MainView`; a test checks every tool is on exactly one tab.
 - `apps/ixpipe_app`: the Baguette UI. `IxpipeApp.MainView` is the main window: home (workflows in `IXPIPE_HOME`, default `~/ixpipe`) and the canvas (ribbon, scrolling canvas with curved wires, properties panel driven by each tool's `fields/0`, results grid of the selected tool's first 50 rows after a run). `IxpipeApp.Theme` holds the colour tokens; every colour class must resolve to one (tested).
-  - Rust is only for NIFs: platform glue, `IxpipeCore.Duck` (`apps/ixpipe_core/native/ixpipe_duckdb`, duckdb-rs `~1.20000` = DuckDB v2.0.0) and `IxpipeCore.Sqlite` (`native/ixpipe_sqlite`, rusqlite bundled). Never compile DuckDB: the NIF links a prebuilt `libduckdb` that ships beside it in `priv/native` (rpath `$ORIGIN`). Desktop builds download DuckDB's official library (libduckdb-sys's `download-lib`); Android links the one CI publishes as a release asset.
+  - Rust is only for NIFs: platform glue, `IxpipeCore.Python` (`native/ixpipe_python`, RustPython; build.rs freezes only the stdlib modules the sandbox allows, and the crate builds for size), `IxpipeCore.Duck` (`apps/ixpipe_core/native/ixpipe_duckdb`, duckdb-rs `~1.20000` = DuckDB v2.0.0) and `IxpipeCore.Sqlite` (`native/ixpipe_sqlite`, rusqlite bundled). Never compile DuckDB: the NIF links a prebuilt `libduckdb` that ships beside it in `priv/native` (rpath `$ORIGIN`). Desktop builds download DuckDB's official library (libduckdb-sys's `download-lib`); Android links the one CI publishes as a release asset.
 
 ## Rules
 
@@ -58,7 +59,7 @@ one-off style is a bug. `design_rules_test.exs` enforces what can be checked.
 - **Ribbon** (`<.ribbon>`, `<.ribbon_group>`), as in ixtable after Access:
   a row of tabs over labelled command groups, under the canvas header.
   Home holds Edit (Undo, Redo) and View (zoom); In/Out, Preparation, Join,
-  Parse and Transform hold the tools. Commands are `:quiet` small buttons with
+  Parse, Transform and Code hold the tools. Commands are `:quiet` small buttons with
   a lucide icon (`<.button icon="undo-2">`, ixtable's: Undo2, Redo2, ZoomIn,
   ZoomOut; each tool its own, an input and output sharing their format's)
   and a short noun ("CSV" in the Input group); zoom is icon-only with an
@@ -97,6 +98,10 @@ mix format --check-formatted
 BAGUETTE_HOST_FEATURES=playwright MIX_ENV=prod mix release ixpipe --overwrite
 xvfb-run -a mix test --only playwright
 ```
+
+Script tool tests are tagged by language (`script: "python"`, `"javascript"`,
+`"ruby"`, `"php"`) and run only where that runtime is installed; `:pandas`
+ones need pandas and pyarrow.
 
 Postgres tests (`:postgres`, excluded by default) need a local server with a
 role `ixpipe` and database `ixpipe_test`; override with `IXPIPE_PG_HOST`,
