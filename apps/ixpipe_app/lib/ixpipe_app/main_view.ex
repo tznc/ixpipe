@@ -499,8 +499,11 @@ defmodule IxpipeApp.MainView do
 
     case result do
       {:ok, rows, previews} ->
+        # Results shows a tool's rows; a selected container or comment has none.
+        tool = match?(%Spec.Node{}, Edit.find(assigns.spec, assigns.selected))
+
         hint =
-          if assigns.selected,
+          if tool,
             do: "Results shows #{assigns.selected}.",
             else: "Select a tool to see its rows in Results."
 
@@ -514,7 +517,7 @@ defmodule IxpipeApp.MainView do
         status = {:success, "Run succeeded", hint}
 
         # On a phone, a selected tool's rows show at once.
-        pane = if phone?(assigns) && assigns.selected, do: "results", else: assigns.pane
+        pane = if phone?(assigns) && tool, do: "results", else: assigns.pane
 
         {:noreply,
          %{assigns | status: status, rows: rows, previews: previews, pane: pane, skipped: skipped}}
@@ -623,7 +626,7 @@ defmodule IxpipeApp.MainView do
     clear? = fn {x, y} -> Enum.all?(taken, &(not overlap?({x, y, w, h}, &1))) end
     bottom = Enum.max(Enum.map(taken, &(elem(&1, 1) + elem(&1, 3))), fn -> 0 end)
 
-    case Enum.find(for(y <- 0..600//20, x <- 0..800//20, do: {x, y}), clear?) do
+    case Enum.find(for(y <- 0..600//20, x <- 20..820//20, do: {x, y}), clear?) do
       {x, y} -> %{"x" => x, "y" => y}
       nil -> %{"x" => 40, "y" => bottom + 24}
     end

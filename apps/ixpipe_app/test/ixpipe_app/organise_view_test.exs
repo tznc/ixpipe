@@ -134,6 +134,17 @@ defmodule IxpipeApp.OrganiseViewTest do
     assert Test.text(w) =~ "3 tools skipped"
   end
 
+  test "a run with a container selected points to tools, and a phone stays on the canvas",
+       %{w: w, pid: pid} do
+    Test.click(w, "Add container")
+    Test.resize(w, 390, 844)
+    Test.click(w, "Show canvas")
+    Test.click(w, "Run workflow")
+    refute Test.text(w) =~ "Results shows container_1"
+    assert Test.text(w) =~ "Select a tool to see its rows"
+    assert :sys.get_state(pid).assigns.pane == "canvas"
+  end
+
   test "remove a container, keeping or removing its tools", %{w: w, pid: pid} do
     Test.click(w, "Select sorted")
     Test.click(w, "Add container")

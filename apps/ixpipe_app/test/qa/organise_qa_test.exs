@@ -58,16 +58,16 @@ defmodule IxpipeApp.QA.OrganiseTest do
   end
 
   test "a comment and an annotation", %{page: page} do
-    Playwright.click(page, "Select sorted")
+    Playwright.click(page, "Select totals")
     Playwright.click(page, "Summarise settings")
-    assert :ok = Playwright.await_text(page, "Sort by: total · Descending: true")
+    assert :ok = Playwright.await_text(page, "Group by: name · Aggregates: sum(amount) as total")
     Playwright.click(page, "Add comment")
     assert :ok = Playwright.await(page, role: "textbox", name: "Comment")
     Playwright.fill(page, "Comment", "Totals by customer, largest first")
     assert :ok = Playwright.await_text(page, "Totals by customer, largest first")
 
     QA.capture(page, "organise-04-comment", [
-      "A caption 'Sort by: total · Descending: true' sits under the sorted card",
+      "A caption 'Group by: name · Aggregates: sum(amount) as total' sits under the totals card",
       "A grey comment box with a teal border reads 'Totals by customer, largest first', clear of the cards",
       "The right panel is titled 'Comment' with a Text input and a red 'Remove comment' button"
     ])
@@ -84,6 +84,23 @@ defmodule IxpipeApp.QA.OrganiseTest do
       "The Properties pane fills the width: 'Combine', a full-width Title input",
       "Collapse, Disable and the two Remove buttons are 40px tall and wrap rather than clip",
       "Properties is the selected tab in the bottom bar"
+    ])
+  end
+
+  test "a run with a disabled container on a phone", %{page: page} do
+    contain_joined(page)
+    Playwright.click(page, "Disable container")
+    assert :ok = Playwright.await(page, role: "button", name: "Enable container")
+    :ok = Playwright.resize(page, 390, 844)
+    assert :ok = Playwright.await(page, role: "tab", name: "Show canvas")
+    Playwright.click(page, role: "tab", name: "Show canvas")
+    Playwright.click(page, "Run workflow")
+    assert :ok = Playwright.await_text(page, "Run succeeded")
+
+    QA.capture(page, "organise-06-phone-run", [
+      "The canvas pane: the Combine box (and joined inside it) faded, with a 'Disabled' pill",
+      "The green 'Run succeeded' callout wraps its text inside its box: '4 tools skipped' is readable, nothing clipped",
+      "orders and customers show row counts; totals, sorted and out show 'Skipped' where visible"
     ])
   end
 end

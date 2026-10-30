@@ -57,7 +57,9 @@ defmodule IxpipeApp.QA.ChaosTest do
 
   defp pick(page) do
     buttons = Playwright.buttons(page)
-    nodes = for "Remove " <> id <- buttons, do: id
+    # What the canvas shows (tools, containers, comments): each has a
+    # Select button and drags by its id.
+    nodes = for "Select " <> id <- buttons, do: id
 
     case :rand.uniform(10) do
       n when n <= 6 or nodes == [] ->
@@ -74,13 +76,18 @@ defmodule IxpipeApp.QA.ChaosTest do
   # A user scrolls to a control before clicking it; the monkey clicks
   # whatever the window lists, so a control scrolled out of view (Playwright:
   # "not stable", "outside of the viewport", "scrolling into view") is
-  # skipped, not a failure.
+  # skipped, not a failure. So is a control the last step's re-render took
+  # away after the monkey listed it (a pane switched): it is gone from a
+  # fresh snapshot, not unreachable.
   defp perform(page, {:click, label}) do
     Playwright.click(%{page | opts: Keyword.put(page.opts, :timeout, 2_000)}, label)
   rescue
     error in RuntimeError ->
-      unless error.message =~ ~r/not stable|outside of the viewport|scrolling into view/,
-        do: reraise(error, __STACKTRACE__)
+      skip? =
+        error.message =~ ~r/not stable|outside of the viewport|scrolling into view/ or
+          (error.message =~ "Timeout" and label not in Playwright.buttons(page))
+
+      unless skip?, do: reraise(error, __STACKTRACE__)
 
       :skipped
   end
