@@ -15,7 +15,9 @@ defmodule IxpipeApp.QA do
 
   @doc """
   Seeds a workflows home, starts the app on it and connects. `open:` names a
-  seeded workflow to open on the canvas (default: the home screen).
+  seeded workflow to open on the canvas (default: the home screen); `env:`
+  adds environment variables, such as baguette's `BAGUETTE_PICK_FILE`
+  answer for native file dialogs.
   Returns `%{app, page, home}`; stop it with `stop/1`.
   """
   def launch!(opts \\ []) do
@@ -29,7 +31,13 @@ defmodule IxpipeApp.QA do
     end
 
     port = String.to_integer(System.get_env("QA_PORT", "9340"))
-    app = Playwright.start_app!(System.get_env("QA_BIN", @release), port: port)
+
+    app =
+      Playwright.start_app!(System.get_env("QA_BIN", @release),
+        port: port,
+        env: Keyword.get(opts, :env, [])
+      )
+
     %{app: app, page: Playwright.connect!(app), home: home}
   end
 

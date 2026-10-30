@@ -11,7 +11,8 @@ defmodule IxpipeCore.Tool do
   `label`, a `type` (see `IxpipeCore.Config`), an optional `hint`, `options`
   for a `:choice`, and `optional: true` when `run/2` can do without it. A
   `:path` may list the file extensions it `accept`s, and `save: true` when
-  the tool writes the file (an editor then offers a save dialog).
+  the tool writes the file (an editor then offers a save dialog). `default`
+  is what `run/2` assumes when an optional setting is absent.
   """
   @type field :: %{
           required(:key) => String.t(),
@@ -21,7 +22,8 @@ defmodule IxpipeCore.Tool do
           optional(:options) => [String.t()],
           optional(:optional) => boolean(),
           optional(:accept) => [String.t()],
-          optional(:save) => boolean()
+          optional(:save) => boolean(),
+          optional(:default) => term()
         }
 
   @callback inputs() :: [String.t()]

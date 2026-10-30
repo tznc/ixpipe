@@ -108,7 +108,7 @@ defmodule IxpipeApp.MainView do
             class="stroke-muted-foreground" />
           <div :for={node <- @spec.nodes} aria-label={node.id} phx-drag="move" phx-value-id={node.id}
             class={"absolute left-[#{node.position["x"]}px] top-[#{node.position["y"]}px] w-[#{node_width()}px] flex-col gap-2 p-3 rounded-md border " <> card_state(node.id, @selected, @from)}>
-            <div class="flex-row items-center justify-between gap-2">
+            <div class="flex-row flex-wrap items-center justify-between gap-2">
               <.button variant={:quiet} size={:sm} class="px-0" phx-click="select" phx-value-id={node.id}
                 aria-label={"Select #{node.id}"}><.section>{node.id}</.section></.button>
               <.button variant={:danger} size={:sm} phx-click="remove" phx-value-id={node.id}
@@ -122,11 +122,17 @@ defmodule IxpipeApp.MainView do
               <.status_badge :for={out <- Tools.outputs(node.tool)} :if={@rows["#{node.id}.#{out}"]}
                 tone={:success}>{out} · {plural(@rows["#{node.id}.#{out}"], "row")}</.status_badge>
             </div>
-            <div class="flex-row gap-1">
+            <%!-- Inputs and outputs on their own labelled rows: a join's left and
+              right inputs are not its left and right outputs. --%>
+            <div :if={node.tool.inputs() != []} class="flex-row flex-wrap items-center gap-1">
+              <.caption class="w-[28px]">In</.caption>
               <.button :for={port <- node.tool.inputs()} size={:sm} phx-click="connect_to"
                 phx-value-id={node.id} phx-value-port={port} aria-label={"Connect to #{node.id} #{port}"}>
                 {port}
               </.button>
+            </div>
+            <div class="flex-row flex-wrap items-center gap-1">
+              <.caption class="w-[28px]">Out</.caption>
               <.button :for={{out, ref, label} <- connectors(node)} size={:sm} phx-click="connect_from"
                 phx-value-from={ref} aria-label={label}>{out}</.button>
             </div>
@@ -472,7 +478,8 @@ defmodule IxpipeApp.MainView do
   defp field(%{field: %{type: :bool}} = assigns) do
     ~H"""
     <div class="flex-row items-center gap-2">
-      <input type="checkbox" checked={@node.config[@field.key] == true} phx-click="switch"
+      <input type="checkbox" checked={Map.get(@node.config, @field.key, @field[:default]) == true}
+        phx-click="switch"
         phx-value-key={@field.key} aria-label={@field.label} />
       <.body>{@field.label}</.body>
     </div>
@@ -527,7 +534,7 @@ defmodule IxpipeApp.MainView do
       <div class="flex-row items-center gap-2">
         <div class="flex-1">
           <input name={@field.key} value={@drafts[@field.key] || Config.format(@field, @node.config[@field.key])}
-            placeholder={@field[:hint]} aria-label={@field.label} class="w-full" />
+            aria-label={@field.label} class="w-full" />
         </div>
         <.button :if={!@field[:save]} size={:sm} phx-pick-file="picked" phx-value-key={@field.key}
           accept={Enum.join(@field[:accept] || [], ",")} aria-label={"Choose #{String.downcase(@field.label)}"}>
@@ -553,7 +560,7 @@ defmodule IxpipeApp.MainView do
         <.caption :if={@field[:optional]}>Optional</.caption>
       </div>
       <input name={@field.key} value={@drafts[@field.key] || Config.format(@field, @node.config[@field.key])}
-        placeholder={@field[:hint]} aria-label={@field.label} class="w-full" />
+        aria-label={@field.label} class="w-full" />
       <.caption :if={@error} class="text-danger">{@error}</.caption>
       <.caption :if={!@error && @field[:hint]}>{@field.hint}</.caption>
     </div>

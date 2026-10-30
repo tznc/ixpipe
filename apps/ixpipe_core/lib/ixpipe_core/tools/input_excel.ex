@@ -29,7 +29,13 @@ defmodule IxpipeCore.Tools.InputExcel do
         optional: true,
         hint: "Leave empty for the first sheet"
       },
-      %{key: "header", label: "First row is the header", type: :bool, optional: true}
+      %{
+        key: "header",
+        label: "First row is the header",
+        type: :bool,
+        optional: true,
+        default: true
+      }
     ]
 
   @impl true

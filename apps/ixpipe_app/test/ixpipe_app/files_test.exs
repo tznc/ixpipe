@@ -51,4 +51,15 @@ defmodule IxpipeApp.FilesTest do
     spec = :sys.get_state(pid).assigns.spec
     assert hd(spec.nodes).config == %{"path" => "/out/result.parquet"}
   end
+
+  test "a switch with no setting shows the tool's default", %{w: w} do
+    Test.click(w, "Add input_excel")
+
+    [checkbox] =
+      for %{"t" => "input", "a" => %{"aria-label" => "First row is the header"} = a} <-
+            Test.find_all(w, "First row is the header"),
+          do: a
+
+    assert Map.has_key?(checkbox, "checked")
+  end
 end

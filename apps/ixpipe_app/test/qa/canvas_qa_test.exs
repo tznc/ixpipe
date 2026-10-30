@@ -122,4 +122,38 @@ defmodule IxpipeApp.QA.CanvasTest do
       ])
     end
   end
+
+  describe "file tools" do
+    setup do
+      book = Path.join(System.tmp_dir!(), "ixpipe-qa-#{System.unique_integer([:positive])}.xlsx")
+
+      rows = [["region", "sales"], ["North", 120], ["South", 80], ["East", 95]]
+      sheet = %Elixlsx.Sheet{name: "Regions", rows: rows}
+      {:ok, _} = Elixlsx.write_to(%Elixlsx.Workbook{sheets: [sheet]}, book)
+
+      qa = QA.launch!(open: "scratch.yaml", env: [{"BAGUETTE_PICK_FILE", book}])
+
+      on_exit(fn ->
+        QA.stop(qa)
+        File.rm(book)
+      end)
+
+      Map.put(qa, :book, book)
+    end
+
+    test "an Excel input chosen with the file picker", %{page: page, book: book} do
+      Playwright.click(page, "Add input_excel")
+      Playwright.click(page, "Choose file")
+      assert Playwright.input_value(page, "File") == book
+      Playwright.click(page, "Run workflow")
+      assert :ok = Playwright.await_text(page, "Run succeeded")
+      assert :ok = Playwright.await_text(page, "North")
+
+      QA.capture(page, "canvas-08-excel", [
+        "One Input Excel card; the panel shows File (with the workbook's path and a Choose… button), Sheet, and the header switch",
+        "Results lists region and sales: North 120, South 80, East 95, sales right-aligned",
+        "The palette lists Input Excel, Input Parquet, Output Excel and Output Parquet"
+      ])
+    end
+  end
 end
