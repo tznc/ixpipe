@@ -32,6 +32,7 @@ defmodule IxpipeCore.Tools.Join do
   @impl true
   def run(%{"left" => left, "right" => right}, %{"on" => on} = config, ctx) do
     how = config["how"] || "inner"
+    if how != "cross", do: warn_key_types(ctx, left, right, on)
     l = Table.ref(left)
     r = Table.ref(right)
     keys = Enum.map_join(on, ", ", &ident/1)
@@ -66,5 +67,29 @@ defmodule IxpipeCore.Tools.Join do
       "right" =>
         Context.sql(ctx, "right", "SELECT r.* FROM #{r} r ANTI JOIN #{l} l USING (#{keys})")
     }
+  end
+
+  # Keys of different kinds (a number and text) match nothing, or fail to
+  # compare at all; two kinds of number compare fine.
+  defp warn_key_types(ctx, left, right, on) do
+    {lt, rt} = {Table.dtypes(left), Table.dtypes(right)}
+
+    for key <- on, lt[key] && rt[key], kind(lt[key]) != kind(rt[key]) do
+      Context.warn(
+        ctx,
+        ~s(Join key "#{key}" is #{lt[key]} on the left and #{rt[key]} on the right. ) <>
+          "Convert one with a Formula, e.g. CAST(#{ident(key)} AS #{lt[key]}), so the keys match."
+      )
+    end
+  end
+
+  @numbers ~w(TINYINT SMALLINT INTEGER BIGINT HUGEINT UTINYINT USMALLINT UINTEGER UBIGINT
+              UHUGEINT FLOAT DOUBLE REAL)
+  defp kind(type) do
+    cond do
+      type in @numbers or String.starts_with?(type, "DECIMAL") -> :number
+      String.starts_with?(type, "TIMESTAMP") or type == "DATE" -> :time
+      true -> type
+    end
   end
 end

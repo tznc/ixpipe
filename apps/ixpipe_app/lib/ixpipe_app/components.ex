@@ -150,6 +150,24 @@ defmodule IxpipeApp.Components do
   attr(:tabs, :list, required: true, doc: "`{key, label}` pairs")
   attr(:selected, :string, required: true)
   attr(:event, :string, required: true)
+  attr(:touch, :boolean, default: false, doc: "phone size: 40px tabs")
+
+  @doc """
+  A panel's tabs, as the ribbon's: each labelled "<Label> tab", sending
+  `event` with `phx-value-tab`; the selected one takes the teal tint.
+  """
+  def tabs(assigns),
+    do: ~H"""
+    <div class="flex-row items-center gap-1" role="tablist">
+      <button :for={{key, label} <- @tabs} data-variant="tab" role="tab" aria-selected={to_string(key == @selected)}
+        aria-label={"#{label} tab"} phx-click={@event} phx-value-tab={key}
+        class={"#{tab_size(@touch)} rounded-md cursor-pointer text-sm " <> tab_look(key == @selected)}>{label}</button>
+    </div>
+    """
+
+  attr(:tabs, :list, required: true, doc: "`{key, label}` pairs")
+  attr(:selected, :string, required: true)
+  attr(:event, :string, required: true)
   attr(:label, :string, required: true)
 
   @doc """

@@ -18,9 +18,24 @@ defmodule IxpipeApp.MainView do
   @history 100
   @preview_rows 50
   # Narrower than this (a phone in portrait), the window shows one pane at
-  # a time: Canvas, Properties or Results.
+  # a time: Canvas, Properties, Results or Messages.
   @phone_width 640
-  @panes [{"canvas", "Canvas"}, {"properties", "Properties"}, {"results", "Results"}]
+  @panes [
+    {"canvas", "Canvas"},
+    {"properties", "Properties"},
+    {"results", "Results"},
+    {"messages", "Messages"}
+  ]
+  # Under the canvas on a wider window: the selected tool's rows, or the
+  # last run's messages.
+  @panels [{"results", "Results"}, {"messages", "Messages"}]
+  # Messages' filters: `{key, label, accessible name}`.
+  @levels [
+    {"all", "All", "Show all messages"},
+    {"error", "Errors", "Show errors"},
+    {"warning", "Warnings", "Show warnings"},
+    {"info", "Info", "Show info"}
+  ]
   # The ribbon's tabs: Home edits and views the workflow; the rest hold the
   # tools, by category, in labelled groups.
   @ribbon [
@@ -69,7 +84,10 @@ defmodule IxpipeApp.MainView do
       tab: "home",
       width: nil,
       height: nil,
-      pane: "canvas"
+      pane: "canvas",
+      panel: "results",
+      level: "all",
+      run: nil
     }
 
     case args[:path] do
@@ -180,6 +198,7 @@ defmodule IxpipeApp.MainView do
             <div class="flex-row items-center gap-2">
               <.caption>{tool_label(Tools.name(node.tool))}</.caption>
               <.status_badge :if={@rows[node.id]} tone={:success}>{plural(@rows[node.id], "row")}</.status_badge>
+              <.run_badge run={@run} id={node.id} />
             </div>
             <div :if={multi?(node)} class="flex-row flex-wrap gap-1">
               <.status_badge :for={out <- Tools.outputs(node.tool)} :if={@rows["#{node.id}.#{out}"]}
@@ -206,11 +225,13 @@ defmodule IxpipeApp.MainView do
           <.feedback :if={!@phone} toast={@toast} status={@status} phone={false} />
         </div>
         <div :if={!@phone} class="h-px w-full bg-border" />
-        <.results :if={!@phone} node={@node} output={@node && output_key(@node, @output)}
+        <.results :if={!@phone && @panel == "results"} node={@node} output={@node && output_key(@node, @output)}
           preview={@node && @previews[output_key(@node, @output)]} />
+        <.messages :if={!@phone && @panel == "messages"} run={@run} level={@level} spec={@spec} />
         </div>
         <.results :if={@phone && @pane == "results"} node={@node} output={@node && output_key(@node, @output)}
           preview={@node && @previews[output_key(@node, @output)]} phone />
+        <.messages :if={@phone && @pane == "messages"} run={@run} level={@level} spec={@spec} phone />
         <div :if={!@phone} class="w-px h-full bg-border" />
         <.properties :if={!@phone || @pane == "properties"} node={@node} drafts={@drafts} errors={@errors}
           formula_rows={@formula_rows} dir={@dir} phone={@phone} />
@@ -263,8 +284,15 @@ defmodule IxpipeApp.MainView do
     do: {:noreply, %{assigns | width: width, height: height}}
 
   def handle_event("pane", %{"pane" => pane}, assigns)
-      when pane in ["canvas", "properties", "results"],
+      when pane in ["canvas", "properties", "results", "messages"],
       do: {:noreply, %{assigns | pane: pane}}
+
+  def handle_event("panel", %{"tab" => panel}, assigns) when panel in ["results", "messages"],
+    do: {:noreply, %{assigns | panel: panel}}
+
+  def handle_event("level", %{"level" => level}, assigns)
+      when level in ["all", "error", "warning", "info"],
+      do: {:noreply, %{assigns | level: level}}
 
   # Text settings: the form sends every value with the one that changed as
   # _target. Formula rows are one setting, a line each.
@@ -392,38 +420,56 @@ defmodule IxpipeApp.MainView do
     {:noreply, %{assigns | status: status}}
   end
 
+  # Every tool that can run does: a failure skips only what is downstream
+  # of it, and the tools that ran keep their results.
   def handle_event("run", _values, assigns) do
-    result =
-      with {:ok, spec} <- Spec.validate(assigns.spec),
-           {:ok, results} <- IxpipeCore.run(with_home(spec, assigns.dir)) do
-        previews = Map.new(results, fn {id, table} -> {id, preview(table)} end)
-        {:ok, Map.new(previews, fn {id, p} -> {id, p.total} end), previews}
-      end
-
-    case result do
-      {:ok, rows, previews} ->
-        hint =
-          if assigns.selected,
-            do: "Results shows #{assigns.selected}.",
-            else: "Select a tool to see its rows in Results."
-
-        status = {:success, "Run succeeded", hint}
+    case Spec.validate(assigns.spec) do
+      {:ok, spec} ->
+        run = IxpipeCore.execute(with_home(spec, assigns.dir))
+        previews = Map.new(run.tables, fn {id, table} -> {id, preview(table)} end)
+        rows = Map.new(previews, fn {id, p} -> {id, p.total} end)
 
         # On a phone, a selected tool's rows show at once.
         pane = if phone?(assigns) && assigns.selected, do: "results", else: assigns.pane
-        {:noreply, %{assigns | status: status, rows: rows, previews: previews, pane: pane}}
 
-      {:error, {:node_failed, id, message}} ->
-        status = {:danger, "#{id} failed.", "#{message} Fix its config and run again."}
-        {:noreply, %{assigns | status: status, rows: %{}, previews: %{}}}
+        {:noreply,
+         %{
+           assigns
+           | status: run_status(run, assigns.selected),
+             rows: rows,
+             previews: previews,
+             pane: pane,
+             run: %{nodes: run.nodes, messages: run.messages}
+         }}
 
       {:error, reason} ->
         status = {:danger, "The workflow can't run yet.", Spec.format_error(reason)}
-        {:noreply, %{assigns | status: status, rows: %{}, previews: %{}}}
+        {:noreply, %{assigns | status: status, rows: %{}, previews: %{}, run: nil}}
     end
   end
 
   def handle_info(:dismiss_toast, assigns), do: {:noreply, %{assigns | toast: nil}}
+
+  # The run callout: where it failed and why, how many warnings, or success.
+  defp run_status(%IxpipeCore.Run{status: :failed} = run, _selected) do
+    [error | _] = IxpipeCore.Run.messages(run, :error)
+    {:danger, "Failed at #{Enum.join(IxpipeCore.Run.failed(run), ", ")}.", error.text}
+  end
+
+  defp run_status(run, selected) do
+    case length(IxpipeCore.Run.messages(run, :warning)) do
+      0 ->
+        hint =
+          if selected,
+            do: "Results shows #{selected}.",
+            else: "Select a tool to see its rows in Results."
+
+        {:success, "Run succeeded", hint}
+
+      n ->
+        {:warning, "Ran with #{plural(n, "warning")}", "Messages lists what to check."}
+    end
+  end
 
   defp home(assigns) do
     files =
@@ -440,6 +486,7 @@ defmodule IxpipeApp.MainView do
         status: nil,
         toast: nil,
         rows: %{},
+        run: nil,
         pane: "canvas"
     }
   end
@@ -447,7 +494,7 @@ defmodule IxpipeApp.MainView do
   defp open(assigns, path) do
     case path |> File.read!() |> Spec.decode() do
       {:ok, spec} ->
-        %{assigns | spec: place(spec), path: path, error: nil, status: nil, rows: %{}}
+        %{assigns | spec: place(spec), path: path, error: nil, status: nil, rows: %{}, run: nil}
 
       {:error, reason} ->
         %{home(assigns) | error: "#{Path.basename(path)}: #{Spec.format_error(reason)}"}
@@ -490,7 +537,8 @@ defmodule IxpipeApp.MainView do
         from: nil,
         status: nil,
         rows: %{},
-        previews: %{}
+        previews: %{},
+        run: nil
     }
   end
 
@@ -510,6 +558,7 @@ defmodule IxpipeApp.MainView do
         status: nil,
         rows: %{},
         previews: %{},
+        run: nil,
         selected: selected,
         drafts: %{},
         errors: %{}
@@ -653,7 +702,7 @@ defmodule IxpipeApp.MainView do
     ~H"""
     <section class={"flex-col gap-2 p-4 " <> if(@phone, do: "flex-1", else: "h-[240px]")} aria-label="Results">
       <div class="flex-row items-center gap-2">
-        <.section>Results</.section>
+        <.panel_header phone={@phone} panel="results" title="Results" />
         <.caption :if={@preview}>{@output} · {plural(@preview.total, "row")}{if @preview.total > length(@preview.rows), do: ", first #{length(@preview.rows)} shown"}</.caption>
       </div>
       <div :if={@node && multi?(@node)} class="flex-row gap-1">
@@ -683,6 +732,116 @@ defmodule IxpipeApp.MainView do
     </section>
     """
   end
+
+  attr(:phone, :boolean, required: true)
+  attr(:panel, :string, required: true)
+  attr(:title, :string, required: true)
+
+  # On a wider window, the Results and Messages tabs; on a phone, the tab
+  # bar names the pane, so a title.
+  defp panel_header(assigns) do
+    ~H"""
+    <.section :if={@phone}>{@title}</.section>
+    <.tabs :if={!@phone} tabs={panels()} selected={@panel} event="panel" />
+    """
+  end
+
+  attr(:run, :map, default: nil)
+  attr(:id, :string, required: true)
+
+  # A card's run outcome beyond its rows: failed, skipped, or warned.
+  defp run_badge(assigns) do
+    assigns =
+      Map.merge(assigns, %{
+        state: assigns.run && assigns.run.nodes[assigns.id],
+        warnings:
+          if(assigns.run,
+            do:
+              Enum.count(assigns.run.messages, &(&1.node == assigns.id and &1.level == :warning)),
+            else: 0
+          )
+      })
+
+    ~H"""
+    <.status_badge :if={@state == :failed} tone={:danger}>Error</.status_badge>
+    <.status_badge :if={@state == :skipped} tone={:neutral}>Skipped</.status_badge>
+    <.status_badge :if={@state == :ok && @warnings > 0} tone={:warning}>{plural(@warnings, "warning")}</.status_badge>
+    """
+  end
+
+  attr(:run, :map, default: nil)
+  attr(:level, :string, required: true)
+  attr(:spec, :map, required: true)
+  attr(:phone, :boolean, default: false)
+
+  # The last run's messages, by tool in workflow order, filtered by level.
+  # Choosing one selects its tool; a raw error is its tooltip.
+  defp messages(assigns) do
+    messages = if assigns.run, do: assigns.run.messages, else: []
+
+    shown =
+      Enum.filter(
+        messages,
+        &(assigns.level == "all" or Atom.to_string(&1.level) == assigns.level)
+      )
+
+    tools = Map.new(assigns.spec.nodes, &{&1.id, tool_label(Tools.name(&1.tool))})
+
+    assigns =
+      Map.merge(assigns, %{
+        groups: Enum.chunk_by(shown, & &1.node),
+        tools: tools,
+        counts:
+          Map.put(
+            Enum.frequencies_by(messages, &Atom.to_string(&1.level)),
+            "all",
+            length(messages)
+          )
+      })
+
+    ~H"""
+    <section class={"flex-col gap-2 p-4 " <> if(@phone, do: "flex-1", else: "h-[240px]")} aria-label="Messages">
+      <div class="flex-row items-center gap-2">
+        <.panel_header phone={@phone} panel="messages" title="Messages" />
+      </div>
+      <.empty_state :if={!@run} title="No messages yet">Run the workflow to see each tool's messages.</.empty_state>
+      <div :if={@run} class="flex-row flex-wrap gap-1" role="group" aria-label="Message levels">
+        <.button :for={{key, label, name} <- levels()} size={touch(@phone, :sm)} phx-click="level"
+          phx-value-level={key} aria-label={name}
+          class={if @level == key, do: "border-primary bg-primary/12", else: ""}>
+          {label} {@counts[key] || 0}
+        </.button>
+      </div>
+      <.caption :if={@run && @groups == []}>No {level_noun(@level)} in the last run.</.caption>
+      <div :if={@groups != []} class="flex-col gap-3 flex-1 overflow-y-scroll">
+        <div :for={[%{node: node} | _] = group <- @groups} class="flex-col gap-1">
+          <div class="flex-row items-center gap-2">
+            <.label>{node}</.label>
+            <.caption>{@tools[node]}</.caption>
+          </div>
+          <.button :for={m <- group} variant={:quiet} size={touch(@phone, :sm)} class="w-full items-start"
+            phx-click="select" phx-value-id={m.node} aria-label={"#{m.node}: #{m.text}"} title={m.detail}>
+            <.status_badge tone={level_tone(m.level)}>{level_word(m.level)}</.status_badge>
+            <.body class="flex-1">{m.text}</.body>
+          </.button>
+        </div>
+      </div>
+    </section>
+    """
+  end
+
+  defp level_tone(:error), do: :danger
+  defp level_tone(:warning), do: :warning
+  defp level_tone(:info), do: :neutral
+  defp level_word(:error), do: "Error"
+  defp level_word(:warning), do: "Warning"
+  defp level_word(:info), do: "Info"
+  defp level_noun("error"), do: "errors"
+  defp level_noun("warning"), do: "warnings"
+  defp level_noun("info"), do: "info messages"
+  defp level_noun(_), do: "messages"
+  defp levels, do: @levels
+  defp panels, do: @panels
 
   defp cell_class(value, numeric) do
     muted = if value in ["—", "0"], do: "text-muted-foreground ", else: ""
