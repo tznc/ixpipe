@@ -25,7 +25,7 @@ defmodule IxpipeApp.QA.PhoneTest do
   end
 
   test "the ribbon's commands scroll sideways", %{page: page} do
-    Playwright.click(page, "In/Out tab")
+    Playwright.click(page, role: "tab", name: "In/Out tab")
     assert :ok = Playwright.await(page, role: "button", name: "Add input_csv")
 
     QA.capture(page, "phone-02-ribbon", [

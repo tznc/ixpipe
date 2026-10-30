@@ -403,8 +403,12 @@ defmodule IxpipeApp.MainView do
 
     case result do
       {:ok, rows, previews} ->
-        status =
-          {:success, "Run succeeded", "Select a tool to see its rows in Results."}
+        hint =
+          if assigns.selected,
+            do: "Results shows #{assigns.selected}.",
+            else: "Select a tool to see its rows in Results."
+
+        status = {:success, "Run succeeded", hint}
 
         # On a phone, a selected tool's rows show at once.
         pane = if phone?(assigns) && assigns.selected, do: "results", else: assigns.pane

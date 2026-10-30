@@ -89,6 +89,8 @@ defmodule IxpipeApp.PhoneLayoutTest do
     assert UI.find(w, "Results") != []
     assert Test.text(w) =~ "orders · 2 rows"
     assert Test.text(w) =~ "Run succeeded"
+    refute Test.text(w) =~ "Select a tool to see its rows"
+    assert Test.text(w) =~ "Results shows orders."
   end
 
   test "the ribbon's tabs and commands scroll sideways on a phone", %{window: w} do
