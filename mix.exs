@@ -10,7 +10,8 @@ defmodule Ixpipe.MixProject do
       releases: [
         ixpipe: [
           applications: [ixpipe_core: :permanent, ixpipe_app: :permanent],
-          steps: [:assemble, &Baguette.Release.package/1],
+          # `android/1` builds an APK when BAGUETTE_ANDROID is set; else a no-op.
+          steps: [:assemble, &Baguette.Release.package/1, &Baguette.Release.android/1],
           baguette: [window: [title: "ixpipe", width: 1200, height: 800]]
         ]
       ]

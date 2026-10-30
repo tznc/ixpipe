@@ -1,0 +1,113 @@
+name: Android
+
+# ixpipe as an x86_64 APK, booted on an API 34 emulator and smoke-tested
+# (scripts/android-smoke.sh). Modelled on baguette's android.yml.
+#
+# UNTESTED LOCALLY: the dev container has no /dev/kvm, Java or Node setup for
+# Tauri, so no step below past "Install NDK" has been run outside CI.
+#
+# KNOWN GAP: baguette's Android step ships only its own NIF as a jniLib.
+# Explorer (Polars) and exqlite have no Android build in the APK, so the app
+# boots and the home and canvas render, but running a workflow fails. The
+# smoke script warns about this rather than failing. The fix belongs in
+# baguette's `Release.android/1`: cross-build each dep's NIF for the ABI and
+# copy it into jniLibs as `lib<stem>.so`, which the host's `link_native`
+# already symlinks into `priv/native`.
+#
+# Slow (OTP cross-build, emulator boot), so it runs on main and on demand only.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  OTP_TAG: OTP-29.1.2
+  OTP_VERSION: "29.1.2"
+  ELIXIR_VERSION: "1.20.4"
+  NDK_VERSION: 27.2.12479018
+  CARGO_TERM_COLOR: always
+  LANG: C.UTF-8
+
+jobs:
+  emulator:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: ${{ env.OTP_VERSION }}
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-linux-android
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - name: Install NDK
+        run: |
+          sdkmanager --install "ndk;$NDK_VERSION"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+      # Fetches baguette, whose scripts build liberlang and drive the emulator.
+      - run: mix local.hex --force && mix local.rebar --force && mix deps.get
+      - uses: actions/cache@v4
+        id: liberlang
+        with:
+          path: ~/liberlang-android/x86_64-linux-android
+          key: liberlang-android-x86_64-${{ env.OTP_TAG }}-${{ env.NDK_VERSION }}-${{ hashFiles('mix.lock') }}
+      # Untested locally (needs ~30 min and more disk than the dev container has).
+      - name: Cross-build OTP for Android (baguette's script)
+        if: steps.liberlang.outputs.cache-hit != 'true'
+        run: |
+          deps/baguette/scripts/build-liberlang-android.sh "$OTP_TAG" x86_64 ~/liberlang-build
+          mkdir -p ~/liberlang-android/x86_64-linux-android
+          cp ~/liberlang-build/{liberlang.so,erl_child_setup,inet_gethost} ~/liberlang-android/x86_64-linux-android/
+          rm -rf ~/liberlang-build
+      - uses: actions/cache@v4
+        with:
+          path: |
+            deps/baguette/native/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-android-x86_64-${{ hashFiles('mix.lock') }}
+      # Untested locally: the Tauri Android build needs Java and Node.
+      - name: Build the APK
+        env:
+          BAGUETTE_ANDROID: x86_64
+          MIX_ENV: prod
+        run: |
+          export BAGUETTE_LIBERLANG=$HOME/liberlang-android
+          mix release ixpipe --overwrite
+          cp _build/prod/android/ixpipe.apk "$RUNNER_TEMP/ixpipe.apk"
+          unzip -l "$RUNNER_TEMP/ixpipe.apk" | grep -E '\.so$' || true
+        timeout-minutes: 60
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ixpipe-apk
+          path: ${{ runner.temp }}/ixpipe.apk
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      # Untested locally: no KVM in the dev container.
+      - name: Smoke test on the emulator
+        timeout-minutes: 25
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          script: scripts/android-smoke.sh ${{ runner.temp }}/ixpipe.apk android-smoke
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-smoke
+          path: android-smoke
