@@ -27,7 +27,7 @@ defmodule IxpipeCore.Edit do
     end)
   end
 
-  @doc "Feeds node `from` into `port` of node `to`."
+  @doc "Feeds `from` (a node, or `node.output`) into `port` of node `to`."
   @spec connect(Spec.t(), String.t(), String.t(), String.t()) :: Spec.t()
   def connect(spec, from, to, port),
     do: update(spec, to, &%{&1 | inputs: Map.put(&1.inputs, port, from)})
@@ -54,12 +54,16 @@ defmodule IxpipeCore.Edit do
     end
   end
 
-  @doc "Removes node `id` and disconnects every input that read from it."
+  @doc "Removes node `id` and disconnects every input that read any of its outputs."
   @spec remove_node(Spec.t(), String.t()) :: Spec.t()
   def remove_node(spec, id) do
     nodes =
       for node <- spec.nodes, node.id != id do
-        %{node | inputs: Map.reject(node.inputs, fn {_port, from} -> from == id end)}
+        %{
+          node
+          | inputs:
+              Map.reject(node.inputs, fn {_port, ref} -> elem(Spec.source(ref), 0) == id end)
+        }
       end
 
     %{spec | nodes: nodes}

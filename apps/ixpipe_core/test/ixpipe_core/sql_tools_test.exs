@@ -9,12 +9,14 @@ defmodule IxpipeCore.SqlToolsTest do
 
   describe "filter" do
     test "keeps rows matching a SQL expression", %{df: df} do
-      out = Filter.run(%{"in" => df}, %{"expr" => "amount > 10 AND region = 'eu'"})
+      %{"true" => out} = Filter.run(%{"in" => df}, %{"expr" => "amount > 10 AND region = 'eu'"})
       assert DF.to_columns(out)["id"] == [1, 3]
     end
 
     test "can reference the input as df in subqueries", %{df: df} do
-      out = Filter.run(%{"in" => df}, %{"expr" => "amount IN (SELECT MAX(amount) FROM df)"})
+      %{"true" => out} =
+        Filter.run(%{"in" => df}, %{"expr" => "amount IN (SELECT MAX(amount) FROM df)"})
+
       assert DF.to_columns(out)["id"] == [1]
     end
 

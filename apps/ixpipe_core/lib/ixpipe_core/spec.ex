@@ -98,11 +98,30 @@ defmodule IxpipeCore.Spec do
   defp flow(value) when is_binary(value), do: Jason.encode!(value)
   defp flow(value), do: to_string(value)
 
+  @doc """
+  The node and output a wire reads: `"orders"` is `{"orders", nil}` (the
+  node's first output), `"big.false"` is `{"big", "false"}`.
+  """
+  @spec source(String.t()) :: {String.t(), String.t() | nil}
+  def source(ref) do
+    case String.split(ref, ".", parts: 2) do
+      [id, output] -> {id, output}
+      [id] -> {id, nil}
+    end
+  end
+
   @doc "A one-line, human-readable description of a `parse/1` error."
   @spec format_error(term()) :: String.t()
   def format_error({:invalid_yaml, reason}), do: "invalid YAML: #{inspect(reason)}"
   def format_error({:unknown_tool, id, tool}), do: "#{id}: unknown tool #{inspect(tool)}"
   def format_error({:duplicate_id, id}), do: "duplicate node id #{id}"
+  def format_error({:bad_id, id}), do: "#{id}: an id can't contain a dot"
+
+  def format_error({:unknown_output, _id, ref} = error) do
+    {from, output} = source(ref)
+    "#{elem(error, 1)}: #{from} has no output #{output}"
+  end
+
   def format_error({:unknown_input, id, from}), do: "#{id}: input #{from} is not a node"
 
   def format_error({:missing_config, id, keys}),
@@ -128,6 +147,9 @@ defmodule IxpipeCore.Spec do
       cond do
         Enum.any?(acc, &(&1.id == id)) ->
           {:halt, {:error, {:duplicate_id, id}}}
+
+        String.contains?(id, ".") ->
+          {:halt, {:error, {:bad_id, id}}}
 
         tool = IxpipeCore.Tools.lookup(node["tool"]) ->
           inputs = Map.new(node["inputs"] || %{}, fn {k, v} -> {to_string(k), to_string(v)} end)
@@ -163,13 +185,26 @@ defmodule IxpipeCore.Spec do
         Enum.sort(expected) != got ->
           {:error, {:bad_ports, node.id, expected: expected, got: got}}
 
-        missing = Enum.find(Map.values(node.inputs), &(&1 not in ids)) ->
+        missing = Enum.find(Map.values(node.inputs), &(elem(source(&1), 0) not in ids)) ->
           {:error, {:unknown_input, node.id, missing}}
+
+        bad = Enum.find(Map.values(node.inputs), &unknown_output?(&1, nodes)) ->
+          {:error, {:unknown_output, node.id, bad}}
 
         true ->
           nil
       end
     end)
+  end
+
+  defp unknown_output?(ref, nodes) do
+    case source(ref) do
+      {_id, nil} ->
+        false
+
+      {id, output} ->
+        output not in IxpipeCore.Tools.outputs(Enum.find(nodes, &(&1.id == id)).tool)
+    end
   end
 
   defp check_config(nodes) do
@@ -189,8 +224,8 @@ defmodule IxpipeCore.Spec do
 
       cycle =
         Enum.find_value(nodes, fn node ->
-          Enum.find_value(node.inputs, fn {_port, from} ->
-            case :digraph.add_edge(graph, from, node.id) do
+          Enum.find_value(node.inputs, fn {_port, ref} ->
+            case :digraph.add_edge(graph, elem(source(ref), 0), node.id) do
               {:error, {:bad_edge, path}} -> Enum.uniq(path)
               _ -> nil
             end

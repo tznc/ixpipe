@@ -140,6 +140,6 @@ defmodule IxpipeCore.RunTest do
         - {id: self, tool: join, inputs: {left: orders, right: orders}, config: {on: [id]}}
       """)
 
-    assert DF.n_rows(results["self"]) == 4
+    assert DF.n_rows(results["self.joined"]) == 4
   end
 end

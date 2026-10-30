@@ -20,6 +20,13 @@ defmodule IxpipeCore.Tools do
 
   @names Map.new(@tools, fn {name, module} -> {module, name} end)
 
+  @doc "A tool's output names; `[\"out\"]` unless it declares several."
+  @spec outputs(module()) :: [String.t()]
+  def outputs(tool) do
+    Code.ensure_loaded(tool)
+    if function_exported?(tool, :outputs, 0), do: tool.outputs(), else: ["out"]
+  end
+
   @spec name(module()) :: String.t()
   def name(module), do: Map.fetch!(@names, module)
 

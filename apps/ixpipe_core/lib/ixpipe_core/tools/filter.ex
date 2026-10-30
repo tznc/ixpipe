@@ -1,7 +1,8 @@
 defmodule IxpipeCore.Tools.Filter do
   @moduledoc """
-  Keeps rows where a Polars SQL expression is true. Config: `expr`, such as
-  `amount > 10 AND region = 'eu'`. The input is the table `df`.
+  Splits rows on a Polars SQL condition: `true` gets the rows where it holds,
+  `false` the rest (including rows where it is NULL). Config: `expr`, such
+  as `amount > 10 AND region = 'eu'`. The input is the table `df`.
   """
   @behaviour IxpipeCore.Tool
 
@@ -20,6 +21,14 @@ defmodule IxpipeCore.Tools.Filter do
     ]
 
   @impl true
-  def run(%{"in" => df}, %{"expr" => expr}),
-    do: Explorer.DataFrame.sql(df, "SELECT * FROM df WHERE (#{expr})")
+  def outputs, do: ["true", "false"]
+
+  @impl true
+  def run(%{"in" => df}, %{"expr" => expr}) do
+    %{
+      "true" => Explorer.DataFrame.sql(df, "SELECT * FROM df WHERE (#{expr})"),
+      "false" =>
+        Explorer.DataFrame.sql(df, "SELECT * FROM df WHERE NOT COALESCE((#{expr}), FALSE)")
+    }
+  end
 end

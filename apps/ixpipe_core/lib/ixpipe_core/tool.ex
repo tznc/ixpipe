@@ -21,7 +21,15 @@ defmodule IxpipeCore.Tool do
         }
 
   @callback inputs() :: [String.t()]
+  @doc """
+  The tool's outputs, when it has more than one (Filter's `true` and
+  `false`). `run/2` then returns a map of output name to frame. Tools
+  without it have one output, `out`.
+  """
+  @callback outputs() :: [String.t()]
+  @optional_callbacks outputs: 0
   @doc "The tool's settings, in the order an editor shows them."
   @callback fields() :: [field()]
-  @callback run(%{String.t() => DataFrame.t()}, config :: map()) :: DataFrame.t()
+  @callback run(%{String.t() => DataFrame.t()}, config :: map()) ::
+              DataFrame.t() | %{String.t() => DataFrame.t()}
 end

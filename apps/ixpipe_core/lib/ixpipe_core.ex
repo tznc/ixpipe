@@ -6,8 +6,10 @@ defmodule IxpipeCore do
   alias IxpipeCore.Spec
 
   @doc """
-  Runs every node of `spec`, returning each node's output by node id. The
-  first node to raise fails the run; nodes downstream of it do not run.
+  Runs every node of `spec`, returning each output by name: the node id for
+  a tool with one output, `node.output` for each output of a tool with
+  several. The first node to raise fails the run; nodes downstream of it do
+  not run.
   """
   @spec run(Spec.t()) ::
           {:ok, %{String.t() => Explorer.DataFrame.t()}}
@@ -18,7 +20,8 @@ defmodule IxpipeCore do
       |> to_runic()
       |> Workflow.react_until_satisfied(:run)
       |> Workflow.raw_productions_by_component()
-      |> Map.new(fn {id, [value | _]} -> {id, value} end)
+      |> Enum.flat_map(fn {id, [value | _]} -> flatten(id, value) end)
+      |> Map.new()
 
     case Enum.find(Map.values(results), &match?({:failed, _, _}, &1)) do
       nil -> {:ok, results}
@@ -29,16 +32,31 @@ defmodule IxpipeCore do
   @doc "Compiles `spec` into a Runic workflow with one step per node."
   @spec to_runic(Spec.t()) :: Workflow.t()
   def to_runic(%Spec{} = spec) do
+    tools = Map.new(spec.nodes, &{&1.id, &1.tool})
+
     Enum.reduce(spec.nodes, Runic.workflow(name: spec.name || "ixpipe"), fn node, wrk ->
       ports = node.tool.inputs()
-      # A Runic join never fires on a repeated parent, so each parent feeds
-      # the step once and `slots` maps every port to its parent's argument.
-      parents = Enum.map(ports, &node.inputs[&1])
-      unique = Enum.uniq(parents)
-      slots = Enum.zip(ports, Enum.map(parents, fn p -> Enum.find_index(unique, &(&1 == p)) end))
+      sources = Enum.map(ports, &Spec.source(node.inputs[&1]))
+      # A Runic join never fires on a repeated parent, so each parent node
+      # feeds the step once; `slots` maps every port to its parent's
+      # argument and the output it reads (the first, when unnamed).
+      unique = sources |> Enum.map(&elem(&1, 0)) |> Enum.uniq()
+
+      slots =
+        for {port, {from, output}} <- Enum.zip(ports, sources) do
+          index = Enum.find_index(unique, &(&1 == from))
+          {port, index, output || hd(IxpipeCore.Tools.outputs(tools[from]))}
+        end
+
       Workflow.add(wrk, step(node, slots, length(unique)), add_opts(unique))
     end)
   end
+
+  defp flatten(id, %Explorer.DataFrame{} = df), do: [{id, df}]
+  defp flatten(id, {:failed, _, _} = failed), do: [{id, failed}]
+
+  defp flatten(id, outputs) when is_map(outputs),
+    do: for({out, df} <- outputs, do: {"#{id}.#{out}", df})
 
   defp add_opts([]), do: []
   defp add_opts([parent]), do: [to: parent]
@@ -60,7 +78,12 @@ defmodule IxpipeCore do
   end
 
   @doc false
-  def inputs(slots, args), do: Map.new(slots, fn {port, i} -> {port, Enum.at(args, i)} end)
+  def inputs(slots, args),
+    do: Map.new(slots, fn {port, i, output} -> {port, pick(Enum.at(args, i), output)} end)
+
+  defp pick(%Explorer.DataFrame{} = df, _output), do: df
+  defp pick({:failed, _, _} = failed, _output), do: failed
+  defp pick(outputs, output) when is_map(outputs), do: Map.fetch!(outputs, output)
 
   # A failure is passed downstream as a value, so the run still settles and
   # reports the node that raised.
