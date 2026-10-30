@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Installs the ixpipe APK on a running emulator and proves the engine runs
 # there: the embedded BEAM boots and renders, the canvas opens, and a
-# workflow that reads a CSV, sorts it and writes it to CSV (Explorer) and
-# SQLite (ixpipe_sqlite) runs from the Run workflow button and leaves the
+# workflow that reads a CSV, sorts it and writes it to CSV (DuckDB, through
+# ixpipe_duckdb and the libduckdb.so beside it) and SQLite (ixpipe_sqlite) runs from the Run workflow button and leaves the
 # right files behind; a swipe scrolls the canvas. Fails if any NIF is missing
 # from the APK, or the host reports an unknown icon or an unsupported class.
 # Saves screenshots (home, canvas, run, scrolled) and logcat to the output
@@ -147,6 +147,13 @@ YAML
       fi
       shot scrolled
     fi
+    # DuckDB ran in the app: its library is mapped into the app's process,
+    # from the APK's native library directory.
+    pid=$(adb shell pidof "$PKG" | tr -d '\r' || true)
+    duckdb=$(as_app "grep -m1 libduckdb.so /proc/$pid/maps" 2>/dev/null | tr -d '\r' || true)
+    echo "libduckdb mapped: ${duckdb:-no}"
+    [[ $duckdb == */libduckdb.so ]] || fail "libduckdb.so is not loaded in the app"
+    as_app "find /data/data/$PKG -path \"*/ixpipe_core-*/priv/native/*\" -exec ls -l {} +" 2>/dev/null || true
     csv=$(as_app "cat $home/sorted.csv" 2>/dev/null | tr -d '\r' || true)
     echo "sorted.csv:"
     echo "$csv"

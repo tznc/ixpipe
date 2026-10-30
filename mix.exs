@@ -12,9 +12,41 @@ defmodule Ixpipe.MixProject do
           applications: [ixpipe_core: :permanent, ixpipe_app: :permanent],
           # `android/1` builds an APK when BAGUETTE_ANDROID is set; else a no-op.
           steps: [:assemble, &Baguette.Release.package/1, &Baguette.Release.android/1],
-          baguette: [window: [title: "ixpipe", width: 1200, height: 800]]
+          baguette: [
+            window: [title: "ixpipe", width: 1200, height: 800],
+            android_nifs: [ixpipe_core: &libduckdb_android/1]
+          ]
         ]
       ]
+    ]
+  end
+
+  # Android: the DuckDB NIF links the libduckdb our CI publishes
+  # (scripts/android-libduckdb.sh downloads it), which ships beside it in
+  # place of the build machine's copy. DuckDB is never compiled.
+  defp libduckdb_android(triple) do
+    dir =
+      Path.join(
+        System.get_env("IXPIPE_LIBDUCKDB_ANDROID") ||
+          Path.join(Mix.Project.build_path(), "android/libduckdb"),
+        triple
+      )
+
+    unless File.regular?(Path.join(dir, "libduckdb.so")) do
+      {_, 0} =
+        System.cmd("scripts/android-libduckdb.sh", [triple, dir],
+          cd: __DIR__,
+          into: IO.stream()
+        )
+    end
+
+    [
+      env: [
+        {"DUCKDB_LIB_DIR", dir},
+        {"DUCKDB_INCLUDE_DIR", dir},
+        {"DUCKDB_DOWNLOAD_LIB", "0"}
+      ],
+      libs: [Path.join(dir, "libduckdb.so")]
     ]
   end
 

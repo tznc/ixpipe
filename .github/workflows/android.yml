@@ -6,9 +6,12 @@ name: Android
 # on baguette's android.yml.
 #
 # Release.android/1 (baguette) cross-builds every dependency NIF for the ABI:
-# ixpipe_duckdb (DuckDB, bundled C++) and ixpipe_sqlite. DuckDB takes a
-# while, so the builds are kept in _build/prod/android/nifs, cached by
-# mix.lock and the crates' sources.
+# ixpipe_duckdb and ixpipe_sqlite (rusqlite, bundled SQLite), kept in
+# _build/prod/android/nifs and cached by mix.lock and the crates' sources.
+# DuckDB itself is never compiled here: ixpipe_duckdb links the libduckdb.so
+# that libduckdb-android.yml builds once per DuckDB version and publishes as
+# a release, which mix.exs downloads (scripts/android-libduckdb.sh) and the
+# APK ships beside the NIF as lib/<abi>/libduckdb.so.
 #
 on:
   push:
@@ -16,6 +19,7 @@ on:
     paths:
       - .github/workflows/android.yml
       - scripts/android-*
+      - scripts/libduckdb-android.sha256
       - mix.exs
       - mix.lock
       - apps/*/mix.exs
@@ -49,7 +53,7 @@ jobs:
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
-      # Polars, the NDK and the emulator need more than the runner's free disk.
+      # The NDK, the Rust builds and the emulator need more than the runner's free disk.
       - name: Free disk space
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android/sdk/ndk /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/share/swift
@@ -100,14 +104,14 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
           key: cargo-android-${{ matrix.abi }}-${{ hashFiles('mix.lock') }}
-      # The dependency NIFs built for Android, by app version (DuckDB's
-      # build is the slow one). Bump the version when the names the
-      # NIFs ship under change, so a stale cache is not saved over.
+      # The dependency NIFs built for Android, by app version. Bump the
+      # version when the names the NIFs ship under change, so a stale cache
+      # is not saved over.
       - uses: actions/cache/restore@v4
         id: nifs
         with:
           path: _build/prod/android/nifs/${{ matrix.triple }}
-          key: android-nifs-v2-${{ matrix.abi }}-${{ hashFiles('mix.lock', 'apps/ixpipe_core/native/**') }}
+          key: android-nifs-v3-${{ matrix.abi }}-${{ hashFiles('mix.lock', 'apps/ixpipe_core/native/**', 'scripts/libduckdb-android.sha256') }}
       - name: Build the APK
         env:
           BAGUETTE_ANDROID: ${{ matrix.abi }}
@@ -118,14 +122,22 @@ jobs:
           apk=$RUNNER_TEMP/ixpipe-${{ matrix.abi }}.apk
           cp _build/prod/android/ixpipe.apk "$apk"
           unzip -l "$apk" | grep -E '\.so$'
-          # Each NIF ships under its library's own name, for this ABI only.
-          unzip -l "$apk" | grep -q "lib/${{ matrix.jni }}/libexplorer.so"
+          ls -l "$apk"
+          # Each NIF ships under its library's own name, for this ABI only,
+          # and DuckDB's library beside them.
+          for lib in libixpipe_duckdb.so libixpipe_sqlite.so libduckdb.so; do
+            unzip -l "$apk" | grep -q "lib/${{ matrix.jni }}/$lib" || { echo "::error::no lib/${{ matrix.jni }}/$lib in the APK"; exit 1; }
+          done
           if unzip -l "$apk" | grep -E 'liblib|unknown-linux-gnu'; then
             echo "::error::a NIF ships under the build machine's file name"; exit 1
           fi
           # What each shipped library links: Android must find all of it.
           for so in deps/baguette/native/baguette_host/gen/android/app/src/main/jniLibs/${{ matrix.jni }}/*.so; do
             echo "$so:"; "$NDK_HOME"/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf -d "$so" | grep NEEDED || true
+            # A glibc library (the build machine's libduckdb) cannot load here.
+            if "$NDK_HOME"/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf -d "$so" | grep -E 'NEEDED.*(libc\.so\.6|libstdc\+\+\.so\.6)'; then
+              echo "::error::$so is a glibc build, not Android's"; exit 1
+            fi
           done
           rm -rf _build/prod/android/nifs/target
           df -h /
