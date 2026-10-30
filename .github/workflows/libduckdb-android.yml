@@ -1,0 +1,103 @@
+name: libduckdb for Android
+
+# DuckDB publishes no Android build, so this workflow builds DuckDB's shared
+# library once per DuckDB version, with the NDK, and publishes it as the
+# release libduckdb-v<version> on this repository. Android builds
+# (android.yml, through scripts/android-libduckdb.sh) download it and link
+# the NIF against it; nothing else ever compiles DuckDB.
+#
+# The extensions are DuckDB's default in-tree set (core_functions, parquet,
+# json, icu), the same as its official desktop libduckdb, statically linked.
+# No shell, no tests. After a rebuild, update scripts/libduckdb-android.sha256.
+on:
+  push:
+    paths:
+      - .github/workflows/libduckdb-android.yml
+  workflow_dispatch:
+
+env:
+  DUCKDB_VERSION: v2.0.0
+  NDK_VERSION: 27.2.12479018
+  # Matches baguette's Android builds (minSdk 24).
+  ANDROID_API: "24"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: libduckdb-android
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: libduckdb (${{ matrix.abi }})
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: [x86_64, arm64-v8a]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - name: Check out DuckDB ${{ env.DUCKDB_VERSION }}
+        run: git clone --depth 1 --branch "$DUCKDB_VERSION" https://github.com/duckdb/duckdb.git duckdb
+      - name: Install NDK and Ninja
+        run: |
+          sudo apt-get update -q && sudo apt-get install -yq ninja-build
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION" >/dev/null
+          echo "NDK=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+      - name: Build
+        working-directory: duckdb
+        env:
+          GEN: ninja
+          OVERRIDE_GIT_DESCRIBE: ${{ env.DUCKDB_VERSION }}
+          DUCKDB_PLATFORM: android_${{ matrix.abi }}
+        run: |
+          export CMAKE_VARS_BUILD="-DBUILD_UNITTESTS=0 -DBUILD_SHELL=0 \
+            -DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake \
+            -DANDROID_ABI=${{ matrix.abi }} -DANDROID_PLATFORM=android-$ANDROID_API \
+            -DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON"
+          make release
+      - name: Strip and package
+        run: |
+          bin=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin
+          pkg=libduckdb-$DUCKDB_VERSION-android-${{ matrix.abi }}
+          mkdir "$pkg"
+          cp duckdb/build/release/src/libduckdb.so "$pkg/"
+          "$bin/llvm-strip" --strip-unneeded "$pkg/libduckdb.so"
+          cp duckdb/src/include/duckdb.h "$pkg/"
+          if [ -f duckdb/src/include/duckdb_v2.h ]; then cp duckdb/src/include/duckdb_v2.h "$pkg/"; fi
+          "$bin/llvm-readelf" -hd "$pkg/libduckdb.so" | grep -E 'Machine|SONAME|NEEDED'
+          # The NIF's DT_NEEDED is this library's SONAME, and Android looks
+          # it up by that name in the app's native library directory.
+          soname=$("$bin/llvm-readelf" -d "$pkg/libduckdb.so" | grep SONAME | grep -Eo '\[.*\]' || true)
+          if [ -n "$soname" ] && [ "$soname" != "[libduckdb.so]" ]; then
+            echo "::error::libduckdb's SONAME is $soname, not libduckdb.so"; exit 1
+          fi
+          "$bin/llvm-nm" -D --defined-only "$pkg/libduckdb.so" | grep -q ' T duckdb_open$'
+          tar -czf "$pkg.tar.gz" "$pkg"
+          ls -l "$pkg" "$pkg.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libduckdb-android-${{ matrix.abi }}
+          path: libduckdb-${{ env.DUCKDB_VERSION }}-android-${{ matrix.abi }}.tar.gz
+
+  publish:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: libduckdb-android-*
+          merge-multiple: true
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          tag=libduckdb-$DUCKDB_VERSION
+          gh release view "$tag" >/dev/null 2>&1 ||
+            gh release create "$tag" --target "$GITHUB_SHA" --title "libduckdb $DUCKDB_VERSION for Android" \
+              --notes "DuckDB $DUCKDB_VERSION's shared library (core_functions, parquet, json, icu) built with NDK $NDK_VERSION for API $ANDROID_API by .github/workflows/libduckdb-android.yml. Android builds link it; see scripts/android-libduckdb.sh."
+          gh release upload "$tag" libduckdb-*.tar.gz --clobber
+          sha256sum libduckdb-*.tar.gz
