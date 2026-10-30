@@ -12,7 +12,11 @@ defmodule IxpipeCore.Tools do
     "summarize" => IxpipeCore.Tools.Summarize,
     "union" => IxpipeCore.Tools.Union,
     "sample" => IxpipeCore.Tools.Sample,
-    "unique" => IxpipeCore.Tools.Unique
+    "unique" => IxpipeCore.Tools.Unique,
+    "input_excel" => IxpipeCore.Tools.InputExcel,
+    "output_excel" => IxpipeCore.Tools.OutputExcel,
+    "input_parquet" => IxpipeCore.Tools.InputParquet,
+    "output_parquet" => IxpipeCore.Tools.OutputParquet
   }
 
   @spec lookup(term()) :: module() | nil
