@@ -153,9 +153,10 @@ sys.modules["os.path"] = posixpath
 sys.stdout = sys.stderr = sys.__stdout__ = sys.__stderr__ = _io.StringIO()
 sys.stdin = sys.__stdin__ = None
 sys.setrecursionlimit(_RECURSION)
-def _capped(limit, _set=sys.setrecursionlimit, _max=_RECURSION):
-    _set(min(limit, _max))
-sys.setrecursionlimit = _capped
+sys.setrecursionlimit = _CAPPED_RECURSION
+# No code objects from bytes: only the compiler makes them.
+import marshal
+marshal.loads = marshal.load = None
 import operator
 def _guard(names, _refused=_REFUSED):
     for name in names:
@@ -532,6 +533,17 @@ fn cpu_time(clock: libc::clockid_t) -> Duration {
 // ---------------------------------------------------------------------------
 // The interpreter.
 
+/// Code objects can't be built or changed from Python: no `CodeType(...)`
+/// and no `code.replace(...)`, so no crafted bytecode reaches the VM. Without
+/// the `threading` feature builtin types belong to the thread, so each run
+/// seals its own.
+fn seal_code_objects(vm: &VirtualMachine) {
+    let code = vm.ctx.types.code_type;
+    code.slots.new.store(None);
+    code.set_attr(vm.ctx.intern_str("replace"), vm.ctx.none());
+    code.set_attr(vm.ctx.intern_str("__replace__"), vm.ctx.none());
+}
+
 fn interpret(
     code: &str,
     inputs: &[Input],
@@ -559,6 +571,7 @@ fn interpret(
     *sender.lock().unwrap() = Some(tx);
 
     let outcome = interpreter.enter(|vm| {
+        seal_code_objects(vm);
         let result = user_scope(vm, inputs).and_then(|scope| {
             let check = setup(vm, recursion, &scope.globals)?;
             let run = check
@@ -597,6 +610,11 @@ fn setup(vm: &VirtualMachine, recursion: u32, user: &PyDictRef) -> PyResult<PyOb
     scope.globals.set_item("_OS_STUB", vm.ctx.new_str(OS_STUB).into(), vm)?;
     scope.globals.set_item("_RECURSION", vm.ctx.new_int(recursion).into(), vm)?;
     scope.globals.set_item("_REFUSED", refused_fn.into(), vm)?;
+    // Holds no reference to the real setter: nothing to dig out.
+    let capped = vm.new_function("setrecursionlimit", move |limit: usize, vm: &VirtualMachine| {
+        vm.recursion_limit.set(limit.min(recursion as usize));
+    });
+    scope.globals.set_item("_CAPPED_RECURSION", capped.into(), vm)?;
     vm.run_string(scope.clone(), PRELUDE, "<sandbox>")?;
     let check = scope.globals.get_item("_check", vm)?;
 

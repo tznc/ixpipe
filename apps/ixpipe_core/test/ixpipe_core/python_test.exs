@@ -152,6 +152,39 @@ defmodule IxpipeCore.PythonTest do
       assert error("hasattr(len, 'f_' + 'globals')").message =~ "f_globals isn't allowed"
     end
 
+    # The check is a first line; these go around it on purpose (stdlib code
+    # that reads attributes by name) to prove what holds regardless.
+    test "a code object, reached anyway, can't be changed or built" do
+      code = ~S"""
+      import string
+      f = lambda: 0
+      code = string.Formatter().get_field("0.__code__", [f], {})[0]
+      def attempt(fn):
+          try:
+              fn()
+              return "allowed"
+          except TypeError:
+              return "refused"
+      output = [{
+          "replace": attempt(lambda: code.replace(co_code=b"\xff\xff")),
+          "new": attempt(lambda: type(code)(0, 0, 0, 0, 0, 0, b"", (), (), (), "", "", "", 0, b"", b"")),
+      }]
+      """
+
+      assert {:ok, %{columns: ["replace", "new"], rows: [["refused", "refused"]]}} = run(code)
+    end
+
+    test "sys, reached anyway, can't raise the recursion limit or load bytecode" do
+      code = ~S"""
+      import string, typing
+      sys = string.Formatter().get_field("0.__globals__", [typing.cast], {})[0]["sys"]
+      sys.setrecursionlimit(10 ** 9)
+      output = [{"limit": sys.getrecursionlimit(), "loads": sys.modules["marshal"].loads is None}]
+      """
+
+      assert {:ok, %{rows: [[1000, true]]}} = run(code)
+    end
+
     test "classes, super and dunder methods still work" do
       code = ~S"""
       class Base:
