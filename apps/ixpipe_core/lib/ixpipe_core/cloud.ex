@@ -91,9 +91,12 @@ defmodule IxpipeCore.Cloud do
 
   defp connection!(_config), do: nil
 
-  defp load_extension!(db, extension) do
+  @doc "Loads a DuckDB extension, installing it (from `repository`) first if it must."
+  def load_extension!(db, extension, repository \\ nil) do
+    from = if repository, do: " FROM #{repository}", else: ""
+
     with {:error, _} <- Duck.execute(db, "LOAD #{extension}"),
-         {:error, message} <- Duck.execute(db, "INSTALL #{extension}; LOAD #{extension}") do
+         {:error, message} <- Duck.execute(db, "INSTALL #{extension}#{from}; LOAD #{extension}") do
       raise extension_error(extension, message)
     else
       :ok -> :ok
@@ -102,7 +105,7 @@ defmodule IxpipeCore.Cloud do
 
   @doc "What to say when DuckDB can't load `extension`."
   def extension_error(extension, reason) do
-    "Couldn't load DuckDB's #{extension} extension, which cloud paths need (#{first_line(reason)}). " <>
+    "Couldn't load DuckDB's #{extension} extension (#{first_line(reason)}). " <>
       "Connect to the internet once so DuckDB can download it, then run again."
   end
 

@@ -17,7 +17,7 @@ servers = [
   %{
     kind: "mysql",
     tag: :mysql,
-    host: System.get_env("IXPIPE_MYSQL_HOST", "127.0.0.1"),
+    host: System.get_env("IXPIPE_MYSQL_HOST", "localhost"),
     port: System.get_env("IXPIPE_MYSQL_PORT", "3306"),
     database: System.get_env("IXPIPE_MYSQL_DATABASE", "ixpipe_test"),
     username: System.get_env("IXPIPE_MYSQL_USER", "ixpipe"),

@@ -55,7 +55,7 @@ defmodule IxpipeCore.ConnectionsTest do
              Connections.put(dir, Map.delete(@warehouse, "name"))
 
     assert {:error,
-            "Choose a connection type: postgres, mysql, sqlserver, sqlite, s3, gcs or azure"} =
+            "Choose a connection type: postgres, mysql, sqlserver, sqlite, s3, gcs, azure or bigquery"} =
              Connections.put(dir, %{@warehouse | "type" => "oracle"})
 
     assert {:error, "A postgres connection needs host, database and username"} =

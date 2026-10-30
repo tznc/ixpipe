@@ -12,6 +12,7 @@ defmodule IxpipeCore.Connections do
   | `s3` | `key_id`, `secret_env`, `region`, `endpoint`, `session_token_env`, `url_style`, `use_ssl` |
   | `gcs` | `key_id`, `secret_env` (an HMAC key) |
   | `azure` | `connection_string_env` |
+  | `bigquery` | `project`, `service_account_path` or `access_token_env` (else gcloud's application default credentials) |
 
   Secrets are never saved: a setting ending in `_env` names the environment
   variable that holds one.
@@ -25,11 +26,12 @@ defmodule IxpipeCore.Connections do
     {"sqlite", ~w(path)},
     {"s3", ~w(key_id secret_env)},
     {"gcs", ~w(key_id secret_env)},
-    {"azure", ~w(connection_string_env)}
+    {"azure", ~w(connection_string_env)},
+    {"bigquery", ~w(project)}
   ]
   @required Map.new(@types)
   # Secrets someone may try to save in place of the variable that holds them.
-  @secrets ~w(secret connection_string session_token)
+  @secrets ~w(secret connection_string session_token access_token)
 
   @doc "The connection types, in the order an editor lists them."
   @spec types() :: [String.t()]

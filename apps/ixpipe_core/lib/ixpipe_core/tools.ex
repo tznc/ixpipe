@@ -27,6 +27,7 @@ defmodule IxpipeCore.Tools do
     "output_mysql" => IxpipeCore.Tools.OutputMysql,
     "input_sqlserver" => IxpipeCore.Tools.InputSqlserver,
     "output_sqlserver" => IxpipeCore.Tools.OutputSqlserver,
+    "input_bigquery" => IxpipeCore.Tools.InputBigquery,
     "cross_tab" => IxpipeCore.Tools.CrossTab,
     "transpose" => IxpipeCore.Tools.Transpose,
     "text_to_columns" => IxpipeCore.Tools.TextToColumns,

@@ -28,7 +28,7 @@ defmodule IxpipeApp.MainView do
     {"inout", "In/Out",
      [
        {"Input",
-        ~w(input_csv input_excel input_parquet input_json input_sqlite input_postgres input_mysql input_sqlserver)},
+        ~w(input_csv input_excel input_parquet input_json input_sqlite input_postgres input_mysql input_sqlserver input_bigquery)},
        {"Output",
         ~w(output_csv output_excel output_parquet output_json output_sqlite output_postgres output_mysql output_sqlserver)}
      ]},
@@ -883,6 +883,7 @@ defmodule IxpipeApp.MainView do
     "postgres" => "a Postgres",
     "mysql" => "a MySQL",
     "sqlserver" => "a SQL Server",
+    "bigquery" => "a BigQuery",
     "sqlite" => "a SQLite",
     "s3" => "an s3",
     "gcs" => "gcs",
@@ -945,7 +946,8 @@ defmodule IxpipeApp.MainView do
     "input_mysql" => "Input MySQL",
     "output_mysql" => "Output MySQL",
     "input_sqlserver" => "Input SQL Server",
-    "output_sqlserver" => "Output SQL Server"
+    "output_sqlserver" => "Output SQL Server",
+    "input_bigquery" => "Input BigQuery"
   }
   defp tool_label(tool), do: Map.get_lazy(@labels, tool, fn -> String.capitalize(tool) end)
 
@@ -960,6 +962,7 @@ defmodule IxpipeApp.MainView do
     "postgres" => "server",
     "mysql" => "database-zap",
     "sqlserver" => "server-cog",
+    "bigquery" => "warehouse",
     "select" => "list-checks",
     "formula" => "square-function",
     "data_cleansing" => "sparkles",

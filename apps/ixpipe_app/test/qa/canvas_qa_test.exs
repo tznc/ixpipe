@@ -128,7 +128,7 @@ defmodule IxpipeApp.QA.CanvasTest do
 
       QA.capture(page, "canvas-10-ribbon", [
         "Ribbon under the header: tabs Home, In/Out (selected: teal tint), Preparation, Join, Parse, Transform; header Save workflow has a floppy icon, Run workflow a play icon",
-        "Groups Input (CSV, Excel, Parquet, JSON, SQLite, Postgres, MySQL, SQL Server) and Output (same), each command an icon (file, spreadsheet, box, braces, database, server, database-zap, server-cog) before its name, a caption beneath each group",
+        "Groups Input (CSV, Excel, Parquet, JSON, SQLite, Postgres, MySQL, SQL Server, BigQuery) and Output (the same bar BigQuery), each command an icon before its name, a caption beneath each group; nothing clipped",
         "No tools sidebar: the canvas starts at the left edge"
       ])
     end
