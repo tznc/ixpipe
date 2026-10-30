@@ -9,8 +9,7 @@ defmodule IxpipeApp.MainView do
   use Baguette.View
   import IxpipeApp.Components
 
-  alias Explorer.DataFrame
-  alias IxpipeCore.{Config, Connections, Edit, Spec, Tools}
+  alias IxpipeCore.{Config, Connections, Edit, Spec, Table, Tools}
 
   @node_width 200
   @port_y 24
@@ -397,8 +396,8 @@ defmodule IxpipeApp.MainView do
     result =
       with {:ok, spec} <- Spec.validate(assigns.spec),
            {:ok, results} <- IxpipeCore.run(with_home(spec, assigns.dir)) do
-        rows = Map.new(results, fn {id, df} -> {id, DataFrame.n_rows(df)} end)
-        {:ok, rows, Map.new(results, fn {id, df} -> {id, preview(df)} end)}
+        previews = Map.new(results, fn {id, table} -> {id, preview(table)} end)
+        {:ok, Map.new(previews, fn {id, p} -> {id, p.total} end), previews}
       end
 
     case result do
@@ -542,22 +541,23 @@ defmodule IxpipeApp.MainView do
     max(length(lines), assigns.formula_rows)
   end
 
-  # The first rows of a tool's output, as strings, for the results grid.
-  defp preview(df) do
-    columns = DataFrame.names(df)
-    head = df |> DataFrame.head(@preview_rows) |> DataFrame.to_columns()
-    rows = Enum.zip_with(Enum.map(columns, &head[&1]), &Enum.map(&1, fn v -> cell(v) end))
-
-    numeric =
-      for {name, type} <- DataFrame.dtypes(df),
-          match?({kind, _} when kind in [:s, :u, :f], type),
-          do: name
-
-    %{columns: columns, rows: rows, total: DataFrame.n_rows(df), numeric: numeric}
+  # The first rows of a tool's output, as strings, for the results grid, and
+  # its row count: all the view keeps, so a run's tables can be dropped.
+  defp preview(table) do
+    {columns, rows} = Table.values(table, @preview_rows)
+    rows = Enum.map(rows, &Enum.map(&1, fn v -> cell(v) end))
+    numeric = for {name, type} <- Table.dtypes(table), numeric?(type), do: name
+    %{columns: columns, rows: rows, total: Table.count(table), numeric: numeric}
   end
+
+  @numeric ~w(TINYINT SMALLINT INTEGER BIGINT HUGEINT UTINYINT USMALLINT UINTEGER UBIGINT
+              UHUGEINT FLOAT DOUBLE)
+  defp numeric?(type), do: type in @numeric or String.starts_with?(type, "DECIMAL")
 
   defp cell(nil), do: "—"
   defp cell(value) when is_float(value), do: :erlang.float_to_binary(value, [:short])
+  defp cell(value) when is_map(value) and not is_struct(value), do: Jason.encode!(value)
+  defp cell(value) when is_list(value), do: Jason.encode!(value)
   defp cell(value), do: to_string(value)
 
   # Each edge with the slot of the output it leaves and of the input it
