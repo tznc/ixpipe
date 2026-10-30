@@ -23,8 +23,25 @@ nodes:
   - {id: out, tool: output_csv, inputs: {in: totals}, config: {path: totals.csv}}
 ```
 
-Tools: `input_csv`, `select`, `sort`, `join`, `summarize`, `output_csv`
-(`filter` and `formula` coming).
+Tools: `input_csv`, `select`, `filter`, `formula`, `sort`, `join`,
+`summarize`, `output_csv`.
+
+`filter` and `formula` take [Polars SQL](https://docs.pola.rs/api/python/stable/reference/sql/)
+expressions over the input table `df`:
+
+```yaml
+- {id: big, tool: filter, inputs: {in: orders}, config: {expr: "amount > 10 AND region = 'eu'"}}
+- id: priced
+  tool: formula
+  inputs: {in: big}
+  config:
+    formulas:
+      - {as: taxed, expr: "amount * 1.1"}
+      - {as: region, expr: "UPPER(region)"}   # replaces the column
+```
+
+Expressions are full SQL: subqueries and table functions such as
+`read_csv('other.csv')` work, so only run workflows you trust.
 
 Built with Elixir, [Runic](https://hex.pm/packages/runic) (DAG engine),
 [Explorer](https://hex.pm/packages/explorer) (dataframes) and

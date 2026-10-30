@@ -5,6 +5,8 @@ defmodule IxpipeCore.Tools do
     "input_csv" => IxpipeCore.Tools.InputCsv,
     "output_csv" => IxpipeCore.Tools.OutputCsv,
     "select" => IxpipeCore.Tools.Select,
+    "filter" => IxpipeCore.Tools.Filter,
+    "formula" => IxpipeCore.Tools.Formula,
     "sort" => IxpipeCore.Tools.Sort,
     "join" => IxpipeCore.Tools.Join,
     "summarize" => IxpipeCore.Tools.Summarize
