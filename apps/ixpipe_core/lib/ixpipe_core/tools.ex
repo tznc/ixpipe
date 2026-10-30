@@ -19,7 +19,12 @@ defmodule IxpipeCore.Tools do
     "output_parquet" => IxpipeCore.Tools.OutputParquet,
     "input_sqlite" => IxpipeCore.Tools.InputSqlite,
     "output_sqlite" => IxpipeCore.Tools.OutputSqlite,
-    "input_postgres" => IxpipeCore.Tools.InputPostgres
+    "input_postgres" => IxpipeCore.Tools.InputPostgres,
+    "cross_tab" => IxpipeCore.Tools.CrossTab,
+    "transpose" => IxpipeCore.Tools.Transpose,
+    "text_to_columns" => IxpipeCore.Tools.TextToColumns,
+    "regex" => IxpipeCore.Tools.Regex,
+    "data_cleansing" => IxpipeCore.Tools.DataCleansing
   }
 
   @spec lookup(term()) :: module() | nil
