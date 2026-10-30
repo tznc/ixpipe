@@ -46,11 +46,11 @@ defmodule IxpipeCore.Tools.InputSqlite do
     ]
 
   @impl true
-  def run(_inputs, config) do
+  def run(_inputs, config, ctx) do
     sql = Database.sql!(config)
 
     case Sqlite.query(path!(config), sql) do
-      {:ok, {columns, rows}} -> Database.frame(columns, rows)
+      {:ok, {columns, rows}} -> Database.table(ctx, columns, rows)
       {:error, reason} -> raise "SQLite: #{reason}"
     end
   end

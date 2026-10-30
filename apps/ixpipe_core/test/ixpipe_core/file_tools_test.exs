@@ -1,13 +1,12 @@
 defmodule IxpipeCore.FileToolsTest do
   use ExUnit.Case, async: true
-  alias Explorer.DataFrame, as: DF
-  alias IxpipeCore.Tools
+  alias IxpipeCore.{Context, Table, Tools}
 
   setup do
     dir = Path.join(System.tmp_dir!(), "ixpipe-files-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
     on_exit(fn -> File.rm_rf!(dir) end)
-    %{dir: dir}
+    %{dir: dir, ctx: Context.new()}
   end
 
   # A workbook with an "Orders" sheet (header, ints, floats, strings, a blank
@@ -59,81 +58,92 @@ defmodule IxpipeCore.FileToolsTest do
   end
 
   describe "input_excel" do
-    test "reads the first sheet, with typed columns", %{dir: dir} do
-      df = Tools.InputExcel.run(%{}, %{"path" => workbook!(dir)})
-      assert DF.names(df) == ["id", "amount", "region", "when"]
+    test "reads the first sheet, with typed columns", %{dir: dir, ctx: ctx} do
+      df = Tools.InputExcel.run(%{}, %{"path" => workbook!(dir)}, ctx)
+      assert Table.columns(df) == ["id", "amount", "region", "when"]
 
-      cols = DF.to_columns(df)
+      cols = Table.to_columns(df)
       assert cols["id"] == [1, 2, 3]
       assert cols["amount"] == [50.5, 5.0, 30.0]
       assert cols["region"] == ["eu", nil, "us"]
 
-      assert Enum.map(cols["when"], &to_date/1) == [
-               ~D[2026-01-02],
-               ~D[2026-03-04],
-               ~D[2026-05-06]
-             ]
+      assert cols["when"] == [~D[2026-01-02], ~D[2026-03-04], ~D[2026-05-06]]
+
+      assert Table.dtypes(df) == %{
+               "id" => "BIGINT",
+               "amount" => "DOUBLE",
+               "region" => "VARCHAR",
+               "when" => "DATE"
+             }
     end
 
-    test "without a header row, columns are column_1, column_2, ...", %{dir: dir} do
-      df = Tools.InputExcel.run(%{}, %{"path" => workbook!(dir), "header" => false})
-      assert DF.names(df) == ["column_1", "column_2", "column_3", "column_4"]
-      assert DF.n_rows(df) == 4
+    test "without a header row, columns are column_1, column_2, ...", %{dir: dir, ctx: ctx} do
+      df = Tools.InputExcel.run(%{}, %{"path" => workbook!(dir), "header" => false}, ctx)
+      assert Table.columns(df) == ["column_1", "column_2", "column_3", "column_4"]
+      assert Table.count(df) == 4
     end
 
-    test "reads a named sheet; an empty sheet has no rows", %{dir: dir} do
-      df = Tools.InputExcel.run(%{}, %{"path" => workbook!(dir), "sheet" => "Notes"})
-      assert DF.n_rows(df) == 0
+    test "reads a named sheet; an empty sheet has no rows", %{dir: dir, ctx: ctx} do
+      df = Tools.InputExcel.run(%{}, %{"path" => workbook!(dir), "sheet" => "Notes"}, ctx)
+      assert Table.count(df) == 0
+      # A DuckDB table needs a column; the old engine allowed a frame with none.
+      assert Table.dtypes(df) == %{"column_1" => "VARCHAR"}
     end
 
-    test "an unknown sheet names the sheets there are", %{dir: dir} do
+    test "an unknown sheet names the sheets there are", %{dir: dir, ctx: ctx} do
       assert_raise RuntimeError, "No sheet named Nope. Sheets: Orders, Notes", fn ->
-        Tools.InputExcel.run(%{}, %{"path" => workbook!(dir), "sheet" => "Nope"})
+        Tools.InputExcel.run(%{}, %{"path" => workbook!(dir), "sheet" => "Nope"}, ctx)
       end
     end
 
-    test "blank and repeated headers get column_N names", %{dir: dir} do
+    test "blank and repeated headers get column_N names", %{dir: dir, ctx: ctx} do
       path = Path.join(dir, "headers.xlsx")
       sheet = %Elixlsx.Sheet{name: "S", rows: [["a", nil, "a"], [1, 2, 3]]}
       {:ok, _} = Elixlsx.write_to(%Elixlsx.Workbook{sheets: [sheet]}, String.to_charlist(path))
 
-      df = Tools.InputExcel.run(%{}, %{"path" => path})
-      assert DF.names(df) == ["a", "column_2", "column_3"]
+      df = Tools.InputExcel.run(%{}, %{"path" => path}, ctx)
+      assert Table.columns(df) == ["a", "column_2", "column_3"]
     end
   end
 
   describe "output_excel and parquet" do
     test "output_excel writes a sheet that input_excel reads back, and passes through", %{
-      dir: dir
+      dir: dir,
+      ctx: ctx
     } do
-      df = DF.new(id: [1, 2], name: ["Ada", nil], score: [1.5, 2.0])
+      df = Table.new(ctx.db, "src", id: [1, 2], name: ["Ada", nil], score: [1.5, 2.0])
       path = Path.join(dir, "out.xlsx")
 
-      assert Tools.OutputExcel.run(%{"in" => df}, %{"path" => path, "sheet" => "Scores"}) == df
+      assert Tools.OutputExcel.run(%{"in" => df}, %{"path" => path, "sheet" => "Scores"}, ctx) ==
+               df
 
-      back = Tools.InputExcel.run(%{}, %{"path" => path, "sheet" => "Scores"})
+      back = Tools.InputExcel.run(%{}, %{"path" => path, "sheet" => "Scores"}, ctx)
 
-      assert DF.to_columns(back) == %{
+      assert Table.to_columns(back) == %{
                "id" => [1, 2],
                "name" => ["Ada", nil],
                "score" => [1.5, 2.0]
              }
     end
 
-    test "output_excel names its sheet Sheet1 by default", %{dir: dir} do
+    test "output_excel names its sheet Sheet1 by default", %{dir: dir, ctx: ctx} do
       path = Path.join(dir, "default.xlsx")
-      Tools.OutputExcel.run(%{"in" => DF.new(a: [1])}, %{"path" => path})
-      assert DF.n_rows(Tools.InputExcel.run(%{}, %{"path" => path, "sheet" => "Sheet1"})) == 1
+      Tools.OutputExcel.run(%{"in" => Table.new(ctx.db, "src", a: [1])}, %{"path" => path}, ctx)
+
+      assert Table.count(Tools.InputExcel.run(%{}, %{"path" => path, "sheet" => "Sheet1"}, ctx)) ==
+               1
     end
 
-    test "parquet round-trips", %{dir: dir} do
-      df = DF.new(id: [1, 2], name: ["a", "b"])
+    test "parquet round-trips", %{dir: dir, ctx: ctx} do
+      df = Table.new(ctx.db, "src", id: [1, 2], name: ["a", "b"])
       path = Path.join(dir, "data.parquet")
-      assert Tools.OutputParquet.run(%{"in" => df}, %{"path" => path}) == df
-      assert DF.to_columns(Tools.InputParquet.run(%{}, %{"path" => path})) == DF.to_columns(df)
+      assert Tools.OutputParquet.run(%{"in" => df}, %{"path" => path}, ctx) == df
+
+      assert Table.to_columns(Tools.InputParquet.run(%{}, %{"path" => path}, ctx)) ==
+               Table.to_columns(df)
     end
 
-    test "a workflow converts Excel to Parquet and back", %{dir: dir} do
+    test "a workflow converts Excel to Parquet and back", %{dir: dir, ctx: ctx} do
       xlsx = workbook!(dir)
       parquet = Path.join(dir, "orders.parquet")
       out = Path.join(dir, "orders-copy.xlsx")
@@ -155,11 +165,8 @@ defmodule IxpipeCore.FileToolsTest do
         """)
 
       assert {:ok, %{"pq" => df}} = IxpipeCore.run(spec)
-      assert DF.to_columns(df)["amount"] == [50.5, 5.0, 30.0]
-      assert DF.n_rows(Tools.InputExcel.run(%{}, %{"path" => out})) == 3
+      assert Table.to_columns(df)["amount"] == [50.5, 5.0, 30.0]
+      assert Table.count(Tools.InputExcel.run(%{}, %{"path" => out}, ctx)) == 3
     end
   end
-
-  defp to_date(%Date{} = d), do: d
-  defp to_date(%NaiveDateTime{} = d), do: NaiveDateTime.to_date(d)
 end

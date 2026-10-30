@@ -1,10 +1,9 @@
 defmodule IxpipeCore.Database do
   @moduledoc false
   # What the database tools share: finding the connection a tool's config
-  # names, choosing the SQL to run, and turning result rows into a frame.
+  # names, choosing the SQL to run, and turning result rows into a table.
 
-  alias Explorer.DataFrame
-  alias IxpipeCore.Connections
+  alias IxpipeCore.{Connections, Context}
 
   @doc "The saved connection `config` names, from its `_home` or the workflows home."
   def connection!(%{"connection" => name} = config, type) when is_binary(name) and name != "" do
@@ -28,26 +27,43 @@ defmodule IxpipeCore.Database do
   def quote_name(name), do: ~s(") <> String.replace(name, ~s("), ~s("")) <> ~s(")
 
   @doc """
-  A frame from column names and row lists, values converted for Explorer.
-  With `uuids: true` (Postgres), 16-byte binaries are UUIDs shown as text.
+  The node's table from column names and row lists, values converted for
+  DuckDB. With `uuids: true` (Postgres), 16-byte binaries are UUIDs shown as
+  text. SQLite types values, not columns, so a column of integers and reals
+  becomes DOUBLE and any other mix VARCHAR.
   """
-  def frame(columns, rows, opts \\ []) do
+  def table(ctx, columns, rows, opts \\ [])
+
+  def table(%Context{}, [], _rows, _opts),
+    do: raise("The query returned no columns. Write a query that selects some.")
+
+  def table(%Context{} = ctx, columns, rows, opts) do
     uuids = Keyword.get(opts, :uuids, false)
 
     values =
-      rows
-      |> Enum.map(fn row -> Enum.map(row, &value(&1, uuids)) end)
-      |> transpose(length(columns))
+      case rows do
+        [] -> Enum.map(columns, fn _ -> [] end)
+        rows -> Enum.zip_with(rows, &Enum.map(&1, fn v -> value(v, uuids) end))
+      end
 
-    columns |> Enum.zip(values) |> DataFrame.new()
+    Context.table(ctx, Enum.zip(columns, Enum.map(values, &unify/1)))
   end
 
-  defp transpose(rows, width) do
-    case rows do
-      [] -> List.duplicate([], width)
-      rows -> rows |> Enum.zip() |> Enum.map(&Tuple.to_list/1)
+  defp unify(values) do
+    present = Enum.reject(values, &is_nil/1)
+
+    cond do
+      Enum.all?(present, &is_integer/1) -> values
+      Enum.all?(present, &is_number/1) -> Enum.map(values, &(&1 && &1 * 1.0))
+      present |> Enum.map(&kind/1) |> Enum.uniq() |> length() == 1 -> values
+      true -> Enum.map(values, &(&1 && to_string(&1)))
     end
   end
+
+  defp kind(%module{}), do: module
+  defp kind(v) when is_binary(v), do: :string
+  defp kind(v) when is_boolean(v), do: :boolean
+  defp kind(_), do: :other
 
   defp value(%Decimal{} = d, _uuids), do: Decimal.to_float(d)
 

@@ -6,8 +6,7 @@ defmodule IxpipeCore.Tools.OutputSqlite do
   """
   @behaviour IxpipeCore.Tool
 
-  alias Explorer.DataFrame
-  alias IxpipeCore.{Database, Sqlite}
+  alias IxpipeCore.{Database, Sqlite, Table}
   alias IxpipeCore.Tools.InputSqlite
 
   @impl true
@@ -44,11 +43,11 @@ defmodule IxpipeCore.Tools.OutputSqlite do
     ]
 
   @impl true
-  def run(%{"in" => df}, %{"table" => table} = config) do
+  def run(%{"in" => t}, %{"table" => table} = config, _ctx) do
     name = Database.quote_name(table)
-    names = DataFrame.names(df)
-    # In the frame's column order, which the inserts follow; dtypes/1 is a map.
-    dtypes = DataFrame.dtypes(df)
+    {names, rows} = Table.values(t)
+    # In the table's column order, which the inserts follow; dtypes/1 is a map.
+    dtypes = Table.dtypes(t)
 
     columns =
       Enum.map_join(names, ", ", fn col ->
@@ -61,12 +60,7 @@ defmodule IxpipeCore.Tools.OutputSqlite do
         else: []
 
     marks = Enum.map_join(names, ", ", fn _ -> "?" end)
-    data = DataFrame.to_columns(df)
-
-    rows =
-      names
-      |> Enum.map(&data[&1])
-      |> Enum.zip_with(fn row -> Enum.map(row, &param/1) end)
+    rows = Enum.map(rows, &Enum.map(&1, fn v -> param(v) end))
 
     case Sqlite.write(
            InputSqlite.path!(config),
@@ -74,7 +68,7 @@ defmodule IxpipeCore.Tools.OutputSqlite do
            "INSERT INTO #{name} VALUES (#{marks})",
            rows
          ) do
-      :ok -> df
+      :ok -> t
       {:error, reason} -> raise "SQLite: #{reason}"
     end
   end
@@ -85,8 +79,11 @@ defmodule IxpipeCore.Tools.OutputSqlite do
   defp param(%NaiveDateTime{} = dt), do: NaiveDateTime.to_iso8601(dt)
   defp param(other), do: other
 
-  defp sql_type({kind, _}) when kind in [:s, :u], do: "INTEGER"
-  defp sql_type({:f, _}), do: "REAL"
-  defp sql_type(:boolean), do: "INTEGER"
+  @integers ~w(TINYINT SMALLINT INTEGER BIGINT HUGEINT UTINYINT USMALLINT UINTEGER UBIGINT UHUGEINT BOOLEAN)
+  @reals ~w(FLOAT DOUBLE REAL)
+
+  defp sql_type(type) when type in @integers, do: "INTEGER"
+  defp sql_type(type) when type in @reals, do: "REAL"
+  defp sql_type("DECIMAL" <> _), do: "REAL"
   defp sql_type(_), do: "TEXT"
 end

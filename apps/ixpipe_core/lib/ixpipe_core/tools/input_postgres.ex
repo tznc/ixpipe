@@ -37,7 +37,7 @@ defmodule IxpipeCore.Tools.InputPostgres do
     ]
 
   @impl true
-  def run(_inputs, config) do
+  def run(_inputs, config, ctx) do
     conn = Database.connection!(config, "postgres") || raise "Choose a saved connection"
     sql = Database.sql!(config)
 
@@ -62,7 +62,7 @@ defmodule IxpipeCore.Tools.InputPostgres do
     try do
       case Postgrex.query(pid, sql, []) do
         {:ok, %Postgrex.Result{columns: columns, rows: rows}} ->
-          Database.frame(columns || [], rows || [], uuids: true)
+          Database.table(ctx, columns || [], rows || [], uuids: true)
 
         {:error, %Postgrex.Error{} = error} ->
           raise "Postgres: #{Exception.message(error)}"

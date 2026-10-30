@@ -3,11 +3,12 @@ defmodule IxpipeCore.Tools.InputExcel do
   Reads a sheet of an Excel workbook (.xlsx). Config: `path`, optional
   `sheet` (default: the first) and `header` (default true: the first row
   names the columns). Columns of whole numbers become integers, other
-  numbers floats, dates dates, and anything else text.
+  numbers floats, dates dates, and anything else text. An empty sheet is
+  one empty text column, `column_1`.
   """
   @behaviour IxpipeCore.Tool
 
-  alias Explorer.{DataFrame, Series}
+  alias IxpipeCore.Context
 
   @impl true
   def inputs, do: []
@@ -39,7 +40,7 @@ defmodule IxpipeCore.Tools.InputExcel do
     ]
 
   @impl true
-  def run(_inputs, %{"path" => path} = config) do
+  def run(_inputs, %{"path" => path} = config, ctx) do
     {:ok, package} = XlsxReader.open(path)
     sheets = XlsxReader.sheet_names(package)
     sheet = config["sheet"] || List.first(sheets)
@@ -58,13 +59,17 @@ defmodule IxpipeCore.Tools.InputExcel do
         {_, []} -> {[], []}
       end
 
+    # An empty sheet still needs a column: DuckDB tables have at least one.
+    names =
+      case names do
+        [] -> generated(1)
+        names -> names
+      end
+
     columns =
       if rows == [], do: List.duplicate([], length(names)), else: Enum.zip_with(rows, & &1)
 
-    names
-    |> Enum.zip(columns)
-    |> Enum.map(fn {name, values} -> {name, series(values)} end)
-    |> DataFrame.new()
+    Context.table(ctx, Enum.zip_with(names, columns, &{&1, column(&2)}))
   end
 
   defp generated(width), do: for(i <- 1..width//1, do: "column_#{i}")
@@ -81,29 +86,29 @@ defmodule IxpipeCore.Tools.InputExcel do
     |> elem(0)
   end
 
-  defp series(values) do
+  defp column(values) do
     present = Enum.reject(values, &is_nil/1)
 
     cond do
       present == [] ->
-        Series.from_list(values, dtype: :string)
+        values
 
       Enum.all?(present, &(is_number(&1) and &1 == trunc(&1))) ->
-        Series.from_list(Enum.map(values, &(&1 && trunc(&1))))
+        Enum.map(values, &(&1 && trunc(&1)))
 
       Enum.all?(present, &is_number/1) ->
-        Series.from_list(Enum.map(values, &(&1 && &1 * 1.0)))
+        Enum.map(values, &(&1 && &1 * 1.0))
 
       Enum.all?(present, &match?(%Date{}, &1)) ->
-        Series.from_list(values)
+        values
 
       Enum.all?(present, &match?(%NaiveDateTime{}, &1)) ->
         if Enum.all?(present, &(NaiveDateTime.to_time(&1) == ~T[00:00:00])),
-          do: Series.from_list(Enum.map(values, &(&1 && NaiveDateTime.to_date(&1)))),
-          else: Series.from_list(values)
+          do: Enum.map(values, &(&1 && NaiveDateTime.to_date(&1))),
+          else: values
 
       true ->
-        Series.from_list(Enum.map(values, &(&1 && to_string(&1))), dtype: :string)
+        Enum.map(values, &(&1 && to_string(&1)))
     end
   end
 end

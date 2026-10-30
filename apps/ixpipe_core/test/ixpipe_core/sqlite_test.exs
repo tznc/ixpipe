@@ -1,7 +1,6 @@
 defmodule IxpipeCore.SqliteTest do
   use ExUnit.Case, async: true
-  alias Explorer.DataFrame, as: DF
-  alias IxpipeCore.Connections
+  alias IxpipeCore.{Connections, Context, Table}
   alias IxpipeCore.Tools.{InputSqlite, OutputSqlite}
 
   setup do
@@ -23,82 +22,131 @@ defmodule IxpipeCore.SqliteTest do
   end
 
   test "reads a table, keeping names, types and NULLs", %{db: db} do
-    df = InputSqlite.run(%{}, %{"path" => db, "table" => "orders"})
-    assert DF.names(df) == ["id", "amount", "customer", "note"]
-    cols = DF.to_columns(df)
+    df = InputSqlite.run(%{}, %{"path" => db, "table" => "orders"}, Context.new())
+    assert Table.columns(df) == ["id", "amount", "customer", "note"]
+    cols = Table.to_columns(df)
     assert cols["id"] == [1, 2, 3]
     assert cols["amount"] == [50.5, 5.0, 30.25]
     assert cols["customer"] == ["Ada", "Bob", "Ada"]
     assert cols["note"] == [nil, "rush", nil]
-    assert DF.dtypes(df)["id"] == {:s, 64}
+    assert Table.dtypes(df)["id"] == "BIGINT"
+    assert Table.dtypes(df)["amount"] == "DOUBLE"
+    assert Table.dtypes(df)["note"] == "VARCHAR"
+  end
+
+  # SQLite types values, not columns: a column holding integers and reals
+  # becomes DOUBLE, and one mixing numbers and text becomes VARCHAR.
+  test "a column of mixed storage types gets one type", %{db: db} do
+    df =
+      InputSqlite.run(
+        %{},
+        %{"path" => db, "query" => "SELECT 1 AS n, 'a' AS t UNION ALL SELECT 2.5, 3"},
+        Context.new()
+      )
+
+    assert Table.to_columns(df) == %{"n" => [1.0, 2.5], "t" => ["a", "3"]}
+    assert Table.dtypes(df) == %{"n" => "DOUBLE", "t" => "VARCHAR"}
   end
 
   test "reads a query", %{db: db} do
     df =
-      InputSqlite.run(%{}, %{
-        "path" => db,
-        "query" =>
-          "SELECT customer, SUM(amount) AS total FROM orders GROUP BY customer ORDER BY customer"
-      })
+      InputSqlite.run(
+        %{},
+        %{
+          "path" => db,
+          "query" =>
+            "SELECT customer, SUM(amount) AS total FROM orders GROUP BY customer ORDER BY customer"
+        },
+        Context.new()
+      )
 
-    assert DF.to_columns(df) == %{"customer" => ["Ada", "Bob"], "total" => [80.75, 5.0]}
+    assert Table.to_columns(df) == %{"customer" => ["Ada", "Bob"], "total" => [80.75, 5.0]}
   end
 
   test "an empty result keeps its columns", %{db: db} do
     df =
-      InputSqlite.run(%{}, %{
-        "path" => db,
-        "query" => "SELECT id, customer FROM orders WHERE id > 99"
-      })
+      InputSqlite.run(
+        %{},
+        %{
+          "path" => db,
+          "query" => "SELECT id, customer FROM orders WHERE id > 99"
+        },
+        Context.new()
+      )
 
-    assert DF.names(df) == ["id", "customer"]
-    assert DF.n_rows(df) == 0
+    assert Table.columns(df) == ["id", "customer"]
+    assert Table.count(df) == 0
   end
 
   test "reads through a saved connection", %{dir: dir, db: db} do
     :ok = Connections.put(dir, %{"name" => "shop", "type" => "sqlite", "path" => db})
-    df = InputSqlite.run(%{}, %{"connection" => "shop", "table" => "orders", "_home" => dir})
-    assert DF.n_rows(df) == 3
+
+    df =
+      InputSqlite.run(
+        %{},
+        %{"connection" => "shop", "table" => "orders", "_home" => dir},
+        Context.new()
+      )
+
+    assert Table.count(df) == 3
   end
 
   test "says what is missing or wrong", %{dir: dir, db: db} do
     assert_raise RuntimeError, "Choose a saved connection or a database file", fn ->
-      InputSqlite.run(%{}, %{"table" => "orders"})
+      InputSqlite.run(%{}, %{"table" => "orders"}, Context.new())
     end
 
     assert_raise RuntimeError, "Write a query or name a table", fn ->
-      InputSqlite.run(%{}, %{"path" => db})
+      InputSqlite.run(%{}, %{"path" => db}, Context.new())
     end
 
     assert_raise RuntimeError, "No saved connection named nope", fn ->
-      InputSqlite.run(%{}, %{"connection" => "nope", "table" => "orders", "_home" => dir})
+      InputSqlite.run(
+        %{},
+        %{"connection" => "nope", "table" => "orders", "_home" => dir},
+        Context.new()
+      )
     end
 
     error =
       assert_raise RuntimeError, fn ->
-        InputSqlite.run(%{}, %{"path" => db, "table" => "missing"})
+        InputSqlite.run(%{}, %{"path" => db, "table" => "missing"}, Context.new())
       end
 
     assert error.message =~ "no such table"
   end
 
   test "writes a frame, replacing or appending", %{db: db} do
-    df = DF.new(id: [1, 2], name: ["a", nil], score: [1.5, 2.0], ok: [true, false])
-    assert ^df = OutputSqlite.run(%{"in" => df}, %{"path" => db, "table" => "scores"})
-    back = InputSqlite.run(%{}, %{"path" => db, "table" => "scores"})
+    ctx = Context.new()
 
-    assert DF.to_columns(back) == %{
+    df =
+      Table.new(ctx.db, "src", id: [1, 2], name: ["a", nil], score: [1.5, 2.0], ok: [true, false])
+
+    assert ^df =
+             OutputSqlite.run(%{"in" => df}, %{"path" => db, "table" => "scores"}, Context.new())
+
+    back = InputSqlite.run(%{}, %{"path" => db, "table" => "scores"}, Context.new())
+
+    assert Table.to_columns(back) == %{
              "id" => [1, 2],
              "name" => ["a", nil],
              "score" => [1.5, 2.0],
              "ok" => [1, 0]
            }
 
-    OutputSqlite.run(%{"in" => df}, %{"path" => db, "table" => "scores", "mode" => "append"})
-    assert DF.n_rows(InputSqlite.run(%{}, %{"path" => db, "table" => "scores"})) == 4
+    OutputSqlite.run(
+      %{"in" => df},
+      %{"path" => db, "table" => "scores", "mode" => "append"},
+      Context.new()
+    )
 
-    OutputSqlite.run(%{"in" => df}, %{"path" => db, "table" => "scores"})
-    assert DF.n_rows(InputSqlite.run(%{}, %{"path" => db, "table" => "scores"})) == 2
+    assert Table.count(InputSqlite.run(%{}, %{"path" => db, "table" => "scores"}, Context.new())) ==
+             4
+
+    OutputSqlite.run(%{"in" => df}, %{"path" => db, "table" => "scores"}, Context.new())
+
+    assert Table.count(InputSqlite.run(%{}, %{"path" => db, "table" => "scores"}, Context.new())) ==
+             2
   end
 
   test "a workflow reads, sorts and writes SQLite", %{dir: dir, db: db} do
@@ -113,8 +161,8 @@ defmodule IxpipeCore.SqliteTest do
       """)
 
     assert {:ok, _} = IxpipeCore.run(spec)
-    ranked = InputSqlite.run(%{}, %{"path" => db, "table" => "ranked"})
-    assert DF.to_columns(ranked)["id"] == [1, 3, 2]
+    ranked = InputSqlite.run(%{}, %{"path" => db, "table" => "ranked"}, Context.new())
+    assert Table.to_columns(ranked)["id"] == [1, 3, 2]
   end
 
   test "the tools are registered with their settings" do

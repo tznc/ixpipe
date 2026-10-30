@@ -6,7 +6,7 @@ defmodule IxpipeCore.Tools.OutputExcel do
   """
   @behaviour IxpipeCore.Tool
 
-  alias Explorer.DataFrame
+  alias IxpipeCore.Table
 
   @impl true
   def inputs, do: ["in"]
@@ -26,20 +26,14 @@ defmodule IxpipeCore.Tools.OutputExcel do
     ]
 
   @impl true
-  def run(%{"in" => df}, %{"path" => path} = config) do
-    names = DataFrame.names(df)
-    columns = DataFrame.to_columns(df)
+  def run(%{"in" => t}, %{"path" => path} = config, _ctx) do
+    {names, rows} = Table.values(t)
     header = Enum.map(names, &[&1, bold: true])
-
-    rows =
-      case names do
-        [] -> []
-        _ -> Enum.zip_with(Enum.map(names, &columns[&1]), &Enum.map(&1, fn v -> cell(v) end))
-      end
+    rows = Enum.map(rows, &Enum.map(&1, fn v -> cell(v) end))
 
     sheet = %Elixlsx.Sheet{name: config["sheet"] || "Sheet1", rows: [header | rows]}
     {:ok, _} = Elixlsx.write_to(%Elixlsx.Workbook{sheets: [sheet]}, String.to_charlist(path))
-    df
+    t
   end
 
   defp cell(%Date{} = d), do: [{Date.to_erl(d), {0, 0, 0}}, yyyymmdd: true]

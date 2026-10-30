@@ -3,8 +3,7 @@ defmodule IxpipeCore.PostgresTest do
   # Connection settings come from IXPIPE_PG_HOST/PORT/DATABASE/USER and
   # PGPASSWORD (defaults: localhost, 5432, ixpipe_test, ixpipe).
   use ExUnit.Case, async: false
-  alias Explorer.DataFrame, as: DF
-  alias IxpipeCore.Connections
+  alias IxpipeCore.{Connections, Context, Table}
   alias IxpipeCore.Tools.InputPostgres
 
   @moduletag :postgres
@@ -65,15 +64,20 @@ defmodule IxpipeCore.PostgresTest do
   end
 
   defp read(dir, config),
-    do: InputPostgres.run(%{}, Map.merge(%{"connection" => "warehouse", "_home" => dir}, config))
+    do:
+      InputPostgres.run(
+        %{},
+        Map.merge(%{"connection" => "warehouse", "_home" => dir}, config),
+        Context.new()
+      )
 
   test "reads a table with its types and NULLs", %{dir: dir} do
     df = read(dir, %{"table" => "ixpipe_orders"})
 
-    assert DF.names(df) ==
+    assert Table.columns(df) ==
              ~w(id amount price customer paid placed seen seen_tz ref big)
 
-    cols = DF.to_columns(df)
+    cols = Table.to_columns(df)
     assert cols["id"] == [1, 2]
     assert cols["amount"] == [50.5, nil]
     assert cols["price"] == [12.3, nil]
@@ -88,13 +92,20 @@ defmodule IxpipeCore.PostgresTest do
 
   test "reads a query", %{dir: dir} do
     df = read(dir, %{"query" => "SELECT id, customer FROM ixpipe_orders WHERE id = 1"})
-    assert DF.to_columns(df) == %{"id" => [1], "customer" => ["Ada"]}
+    assert Table.to_columns(df) == %{"id" => [1], "customer" => ["Ada"]}
   end
 
   test "an empty result keeps its columns", %{dir: dir} do
     df = read(dir, %{"query" => "SELECT id, customer FROM ixpipe_orders WHERE id > 99"})
-    assert DF.names(df) == ["id", "customer"]
-    assert DF.n_rows(df) == 0
+    assert Table.columns(df) == ["id", "customer"]
+    assert Table.count(df) == 0
+  end
+
+  # A DuckDB table needs a column, so a statement that returns none fails.
+  test "a statement without columns says so", %{dir: dir} do
+    assert_raise RuntimeError, "The query returned no columns. Write a query that selects some.", fn ->
+      read(dir, %{"query" => "UPDATE ixpipe_orders SET id = id WHERE false"})
+    end
   end
 
   test "surfaces the database's error", %{dir: dir} do
