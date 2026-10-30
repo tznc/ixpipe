@@ -34,8 +34,7 @@ defmodule Ixpipe.MixProject do
 
     unless File.regular?(Path.join(dir, "libduckdb.so")) do
       {_, 0} =
-        System.cmd("scripts/android-libduckdb.sh", [triple, dir],
-          cd: __DIR__,
+        System.cmd(Path.join(__DIR__, "scripts/android-libduckdb.sh"), [triple, dir],
           into: IO.stream()
         )
     end
