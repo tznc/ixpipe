@@ -9,7 +9,7 @@ name: Android
 #
 on:
   push:
-    branches: [main, claude/core-engine-scaffold]
+    branches: [main, claude/core-engine-scaffold, claude/duckdb-spike]
     paths:
       - .github/workflows/android.yml
       - scripts/android-*

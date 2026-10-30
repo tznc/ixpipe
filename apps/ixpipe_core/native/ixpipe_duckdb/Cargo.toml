@@ -1,0 +1,13 @@
+[package]
+name = "ixpipe_duckdb"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "ixpipe_duckdb"
+crate-type = ["cdylib"]
+
+[dependencies]
+rustler = "0.38"
+# DuckDB compiled from source, so every target builds the same engine.
+duckdb = { version = "1.20000.1", features = ["bundled"] }
