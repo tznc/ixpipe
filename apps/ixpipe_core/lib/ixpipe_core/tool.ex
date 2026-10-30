@@ -36,7 +36,12 @@ defmodule IxpipeCore.Tool do
   without it have one output, `out`.
   """
   @callback outputs() :: [String.t()]
-  @optional_callbacks outputs: 0
+  @doc """
+  Values to offer for setting `key`, given the node's `config` so far (an
+  Excel tool's sheets), as quick choices beside its text box.
+  """
+  @callback suggestions(key :: String.t(), config :: map()) :: [String.t()]
+  @optional_callbacks outputs: 0, suggestions: 2
   @doc "The tool's settings, in the order an editor shows them."
   @callback fields() :: [field()]
   @doc """

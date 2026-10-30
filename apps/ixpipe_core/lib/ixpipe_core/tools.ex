@@ -17,6 +17,8 @@ defmodule IxpipeCore.Tools do
     "output_excel" => IxpipeCore.Tools.OutputExcel,
     "input_parquet" => IxpipeCore.Tools.InputParquet,
     "output_parquet" => IxpipeCore.Tools.OutputParquet,
+    "input_json" => IxpipeCore.Tools.InputJson,
+    "output_json" => IxpipeCore.Tools.OutputJson,
     "input_sqlite" => IxpipeCore.Tools.InputSqlite,
     "output_sqlite" => IxpipeCore.Tools.OutputSqlite,
     "input_postgres" => IxpipeCore.Tools.InputPostgres,

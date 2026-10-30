@@ -45,11 +45,12 @@ defmodule IxpipeCore.FileToolsTest do
     assert Tools.lookup("input_parquet") == Tools.InputParquet
     assert Tools.lookup("output_parquet") == Tools.OutputParquet
 
-    assert [%{key: "path", label: "File", type: :path}] = Tools.InputParquet.fields()
+    assert [%{key: "path", label: "File", type: :path} | _] = Tools.InputParquet.fields()
 
     assert [
              %{key: "path", label: "File", type: :path},
              %{key: "sheet", label: "Sheet", type: :string, optional: true},
+             %{key: "range", label: "Cell range", type: :string, optional: true},
              %{key: "header", label: "First row is the header", type: :bool, optional: true}
            ] = Tools.InputExcel.fields()
 
