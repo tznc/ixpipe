@@ -11,6 +11,7 @@ defmodule IxpipeApp.MixProject do
       lockfile: "../../mix.lock",
       elixir: "~> 1.20",
       start_permanent: Mix.env() == :prod,
+      elixirc_paths: if(Mix.env() == :test, do: ["lib", "test/support"], else: ["lib"]),
       deps: deps()
     ]
   end
@@ -28,8 +29,9 @@ defmodule IxpipeApp.MixProject do
     [
       {:ixpipe_core, in_umbrella: true},
       {:playwright_ex, "~> 0.15", only: :test},
+      {:stream_data, "~> 1.1", only: :test},
       {:websockex, "~> 0.4", only: :test},
-      {:baguette, github: "ziinc/baguette", ref: "0880ab95eb96a28f671a4e2ec07823ce921d2a60"}
+      {:baguette, github: "ziinc/baguette", ref: "e7b29036b8c53ab8ab2fb91590da9878f93c8e87"}
     ]
   end
 end

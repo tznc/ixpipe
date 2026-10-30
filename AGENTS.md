@@ -21,6 +21,7 @@ desktop and mobile app in Elixir, rendered by GPUI through
   - Engine: `apps/ixpipe_core/test`.
   - UI: headless `Baguette.Test` in `apps/ixpipe_app/test`.
   - End-to-end UI: `Baguette.Playwright` (gpui-playwright) in `apps/ixpipe_app/test/e2e`, tagged `:playwright` and excluded by default.
+  - QA: screenshot QA (`:qa`) and a seeded chaos monkey (`:chaos`) in `apps/ixpipe_app/test/qa`; headless fuzzing in `main_view_fuzz_test.exs`. See `.claude/skills/app-qa/SKILL.md`; run it after UI changes, before reporting done.
 - Never create atoms from workflow input. Ports, ids and config keys stay strings.
 - Runic hashes steps by their fn plus bound variables, so build step fns inline (see `IxpipeCore.step/2`). A fn passed in as a variable gets the same hash for every node.
 - When recommending actions, give options A/B/C plus a recommendation. Ask when something is ambiguous.

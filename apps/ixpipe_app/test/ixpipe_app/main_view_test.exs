@@ -117,36 +117,13 @@ defmodule IxpipeApp.MainViewTest do
     assert Test.text(w) =~ "unknown tool"
   end
 
-  # Not colours: sizes and widths that share the bg-/text-/border- prefixes.
-  @not_colours ~w(xs sm base lg xl 2xl 3xl left right center 2 l-2 l-4)
-
   test "every colour class resolves to a theme token, on both screens", ctx do
     w = start(ctx)
-    assert_colours_resolve(w)
+    assert IxpipeApp.UI.unresolved_colours(w) == []
     Test.click(w, "Open sales.yaml")
     Test.click(w, "Add sort")
     Test.click(w, "Connect from orders")
     Test.click(w, "Connect to sort_1 in")
-    assert_colours_resolve(w)
+    assert IxpipeApp.UI.unresolved_colours(w) == []
   end
-
-  defp assert_colours_resolve(window) do
-    %{"theme" => theme, "root" => root} = Baguette.Host.last_frame(window)
-
-    unresolved =
-      for class <- classes(root),
-          [_, value] <- [Regex.run(~r/^(?:[a-z]+:)?(?:bg|text|border|stroke)-(.+)$/, class)],
-          value not in @not_colours,
-          not String.starts_with?(value, "["),
-          not Map.has_key?(theme, value),
-          uniq: true,
-          do: class
-
-    assert unresolved == []
-  end
-
-  defp classes(%{"a" => attrs, "c" => children}),
-    do: String.split(attrs["class"] || "") ++ Enum.flat_map(children, &classes/1)
-
-  defp classes(_text), do: []
 end
