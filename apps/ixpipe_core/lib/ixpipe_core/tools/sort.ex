@@ -2,6 +2,9 @@ defmodule IxpipeCore.Tools.Sort do
   @moduledoc "Sorts by the listed columns. Config: `by`, optional `desc` (default false)."
   @behaviour IxpipeCore.Tool
 
+  alias IxpipeCore.{Context, Table}
+  import IxpipeCore.Duck, only: [ident: 1]
+
   @impl true
   def inputs, do: ["in"]
 
@@ -13,8 +16,9 @@ defmodule IxpipeCore.Tools.Sort do
     ]
 
   @impl true
-  def run(%{"in" => df}, %{"by" => by} = config) do
-    dir = if config["desc"], do: :desc, else: :asc
-    Explorer.DataFrame.sort_with(df, fn ldf -> Enum.map(by, &{dir, ldf[&1]}) end)
+  def run(%{"in" => t}, %{"by" => by} = config, ctx) do
+    dir = if config["desc"], do: " DESC", else: ""
+    order = Enum.map_join(by, ", ", &(ident(&1) <> dir))
+    Context.sql(ctx, "SELECT * FROM #{Table.ref(t)} ORDER BY #{order}")
   end
 end

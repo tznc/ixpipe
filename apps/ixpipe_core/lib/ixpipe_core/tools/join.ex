@@ -7,9 +7,8 @@ defmodule IxpipeCore.Tools.Join do
   """
   @behaviour IxpipeCore.Tool
 
-  alias Explorer.DataFrame
-
-  @how %{"inner" => :inner, "left" => :left, "outer" => :outer, "cross" => :cross}
+  alias IxpipeCore.{Context, Table}
+  import IxpipeCore.Duck, only: [ident: 1]
 
   @impl true
   def inputs, do: ["left", "right"]
@@ -31,25 +30,39 @@ defmodule IxpipeCore.Tools.Join do
   def outputs, do: ["joined", "left", "right"]
 
   @impl true
-  def run(%{"left" => left, "right" => right}, %{"on" => on} = config) do
-    how = Map.fetch!(@how, config["how"] || "inner")
+  def run(%{"left" => left, "right" => right}, %{"on" => on} = config, ctx) do
+    how = config["how"] || "inner"
+    l = Table.ref(left)
+    r = Table.ref(right)
+    keys = Enum.map_join(on, ", ", &ident/1)
+    left_cols = Table.columns(left)
+
+    # The right side's other columns; a name the left already has gets _right.
+    rights =
+      for col <- Table.columns(right), how == "cross" or col not in on do
+        if col in left_cols,
+          do: "r.#{ident(col)} AS #{ident(col <> "_right")}",
+          else: "r.#{ident(col)}"
+      end
+
+    lefts =
+      for col <- left_cols,
+          do: if(how != "cross" and col in on, do: ident(col), else: "l.#{ident(col)}")
+
+    columns = Enum.join(lefts ++ rights, ", ")
+
+    joined =
+      case how do
+        "cross" -> "SELECT #{columns} FROM #{l} l CROSS JOIN #{r} r"
+        "outer" -> "SELECT #{columns} FROM #{l} l FULL JOIN #{r} r USING (#{keys})"
+        "left" -> "SELECT #{columns} FROM #{l} l LEFT JOIN #{r} r USING (#{keys})"
+        _ -> "SELECT #{columns} FROM #{l} l JOIN #{r} r USING (#{keys})"
+      end
 
     %{
-      "joined" => DataFrame.join(left, right, on: on, how: how),
-      "left" => unmatched(left, right, on),
-      "right" => unmatched(right, left, on)
+      "joined" => Context.sql(ctx, "joined", joined),
+      "left" => Context.sql(ctx, "left", "SELECT * FROM #{l} ANTI JOIN #{r} USING (#{keys})"),
+      "right" => Context.sql(ctx, "right", "SELECT * FROM #{r} ANTI JOIN #{l} USING (#{keys})")
     }
-  end
-
-  # Rows of `df` whose keys appear nowhere in `other`.
-  @marker "__ixpipe_matched"
-  defp unmatched(df, other, on) do
-    keys = other |> DataFrame.select(on) |> DataFrame.distinct()
-    keys = DataFrame.put(keys, @marker, List.duplicate(true, DataFrame.n_rows(keys)))
-
-    df
-    |> DataFrame.join(keys, on: on, how: :left)
-    |> DataFrame.filter_with(&Explorer.Series.is_nil(&1[@marker]))
-    |> DataFrame.discard(@marker)
   end
 end

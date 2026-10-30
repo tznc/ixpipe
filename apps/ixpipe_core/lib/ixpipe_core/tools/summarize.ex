@@ -5,15 +5,16 @@ defmodule IxpipeCore.Tools.Summarize do
   """
   @behaviour IxpipeCore.Tool
 
-  alias Explorer.{DataFrame, Series}
+  alias IxpipeCore.{Context, Table}
+  import IxpipeCore.Duck, only: [ident: 1]
 
   @ops %{
-    "sum" => &Series.sum/1,
-    "mean" => &Series.mean/1,
-    "min" => &Series.min/1,
-    "max" => &Series.max/1,
-    "count" => &Series.count/1,
-    "n_distinct" => &Series.n_distinct/1
+    "sum" => "sum",
+    "mean" => "avg",
+    "min" => "min",
+    "max" => "max",
+    "count" => "count",
+    "n_distinct" => "count(DISTINCT"
   }
 
   @doc "The aggregate ops, by name."
@@ -35,12 +36,26 @@ defmodule IxpipeCore.Tools.Summarize do
     ]
 
   @impl true
-  def run(%{"in" => df}, %{"group_by" => group_by, "aggregates" => aggregates}) do
-    df
-    |> DataFrame.group_by(group_by)
-    |> DataFrame.summarise_with(fn ldf ->
-      for %{"column" => column, "op" => op, "as" => as} <- aggregates,
-          do: {as, Map.fetch!(@ops, op).(ldf[column])}
-    end)
+  def run(%{"in" => t}, %{"group_by" => group_by, "aggregates" => aggregates}, ctx) do
+    aggs =
+      Enum.map_join(aggregates, ", ", fn %{"column" => c, "op" => op, "as" => as} ->
+        "#{aggregate(Map.fetch!(@ops, op), ident(c))} AS #{ident(as)}"
+      end)
+
+    case group_by do
+      [] ->
+        Context.sql(ctx, "SELECT #{aggs} FROM #{Table.ref(t)}")
+
+      _ ->
+        groups = Enum.map_join(group_by, ", ", &ident/1)
+
+        Context.sql(
+          ctx,
+          "SELECT #{groups}, #{aggs} FROM #{Table.ref(t)} GROUP BY #{groups} ORDER BY #{groups}"
+        )
+    end
   end
+
+  defp aggregate("count(DISTINCT", column), do: "count(DISTINCT #{column})"
+  defp aggregate(fun, column), do: "#{fun}(#{column})"
 end

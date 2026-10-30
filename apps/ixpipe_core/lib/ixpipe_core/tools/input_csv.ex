@@ -2,6 +2,9 @@ defmodule IxpipeCore.Tools.InputCsv do
   @moduledoc "Reads a CSV file. Config: `path`."
   @behaviour IxpipeCore.Tool
 
+  alias IxpipeCore.Context
+  import IxpipeCore.Duck, only: [literal: 1]
+
   @impl true
   def inputs, do: []
 
@@ -18,5 +21,6 @@ defmodule IxpipeCore.Tools.InputCsv do
     ]
 
   @impl true
-  def run(_inputs, %{"path" => path}), do: Explorer.DataFrame.from_csv!(path)
+  def run(_inputs, %{"path" => path}, ctx),
+    do: Context.sql(ctx, "SELECT * FROM read_csv(#{literal(path)})")
 end

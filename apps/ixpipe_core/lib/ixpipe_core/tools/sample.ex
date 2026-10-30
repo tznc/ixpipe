@@ -2,7 +2,7 @@ defmodule IxpipeCore.Tools.Sample do
   @moduledoc "Keeps the first (or last) `n` rows. Config: `n`, optional `from`."
   @behaviour IxpipeCore.Tool
 
-  alias Explorer.DataFrame
+  alias IxpipeCore.{Context, Table}
 
   @impl true
   def inputs, do: ["in"]
@@ -15,10 +15,14 @@ defmodule IxpipeCore.Tools.Sample do
     ]
 
   @impl true
-  def run(%{"in" => df}, %{"n" => n} = config) do
+  def run(%{"in" => t}, %{"n" => n} = config, ctx) do
     case config["from"] do
-      "last" -> DataFrame.tail(df, n)
-      _ -> DataFrame.head(df, n)
+      "last" ->
+        offset = max(Table.count(t) - n, 0)
+        Context.sql(ctx, "SELECT * FROM #{Table.ref(t)} LIMIT #{n} OFFSET #{offset}")
+
+      _ ->
+        Context.sql(ctx, "SELECT * FROM #{Table.ref(t)} LIMIT #{n}")
     end
   end
 end

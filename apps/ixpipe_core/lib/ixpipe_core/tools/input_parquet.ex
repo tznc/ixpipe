@@ -2,6 +2,9 @@ defmodule IxpipeCore.Tools.InputParquet do
   @moduledoc "Reads a Parquet file. Config: `path`."
   @behaviour IxpipeCore.Tool
 
+  alias IxpipeCore.Context
+  import IxpipeCore.Duck, only: [literal: 1]
+
   @impl true
   def inputs, do: []
 
@@ -18,5 +21,6 @@ defmodule IxpipeCore.Tools.InputParquet do
     ]
 
   @impl true
-  def run(_inputs, %{"path" => path}), do: Explorer.DataFrame.from_parquet!(path)
+  def run(_inputs, %{"path" => path}, ctx),
+    do: Context.sql(ctx, "SELECT * FROM read_parquet(#{literal(path)})")
 end

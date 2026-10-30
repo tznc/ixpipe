@@ -1,23 +1,32 @@
 defmodule IxpipeCore do
-  @moduledoc "Runs workflows parsed by `IxpipeCore.Spec`."
+  @moduledoc """
+  Runs workflows parsed by `IxpipeCore.Spec`: Runic orchestrates the DAG,
+  and each node's output is a table in the run's DuckDB database
+  (`IxpipeCore.Table`).
+  """
 
   require Runic
   alias Runic.Workflow
-  alias IxpipeCore.Spec
+  alias IxpipeCore.{Context, Duck, Spec, Table}
 
   @doc """
-  Runs every node of `spec`, returning each output by name: the node id for
-  a tool with one output, `node.output` for each output of a tool with
-  several. The first node to raise fails the run; nodes downstream of it do
-  not run.
+  Runs every node of `spec` in a fresh DuckDB database, returning each
+  output's table by name: the node id for a tool with one output,
+  `node.output` for each output of a tool with several. The tables live as
+  long as a result references the database. The first node to raise fails
+  the run; nodes downstream of it do not run.
+
+  Options: `:settings`, DuckDB `SET` options such as `memory_limit`.
   """
-  @spec run(Spec.t()) ::
-          {:ok, %{String.t() => Explorer.DataFrame.t()}}
+  @spec run(Spec.t(), keyword()) ::
+          {:ok, %{String.t() => Table.t()}}
           | {:error, {:node_failed, String.t(), String.t()}}
-  def run(%Spec{} = spec) do
+  def run(%Spec{} = spec, opts \\ []) do
+    {:ok, db} = Duck.open(Keyword.get(opts, :settings, []))
+
     results =
       spec
-      |> to_runic()
+      |> to_runic(db)
       |> Workflow.react_until_satisfied(:run)
       |> Workflow.raw_productions_by_component()
       |> Enum.flat_map(fn {id, [value | _]} -> flatten(id, value) end)
@@ -29,9 +38,9 @@ defmodule IxpipeCore do
     end
   end
 
-  @doc "Compiles `spec` into a Runic workflow with one step per node."
-  @spec to_runic(Spec.t()) :: Workflow.t()
-  def to_runic(%Spec{} = spec) do
+  @doc "Compiles `spec` into a Runic workflow with one step per node, working in `db`."
+  @spec to_runic(Spec.t(), Duck.db()) :: Workflow.t()
+  def to_runic(%Spec{} = spec, db) do
     tools = Map.new(spec.nodes, &{&1.id, &1.tool})
 
     Enum.reduce(spec.nodes, Runic.workflow(name: spec.name || "ixpipe"), fn node, wrk ->
@@ -48,15 +57,16 @@ defmodule IxpipeCore do
           {port, index, output || hd(IxpipeCore.Tools.outputs(tools[from]))}
         end
 
-      Workflow.add(wrk, step(node, slots, length(unique)), add_opts(unique))
+      ctx = %Context{db: db, id: node.id}
+      Workflow.add(wrk, step(node, ctx, slots, length(unique)), add_opts(unique))
     end)
   end
 
-  defp flatten(id, %Explorer.DataFrame{} = df), do: [{id, df}]
+  defp flatten(id, %Table{} = table), do: [{id, table}]
   defp flatten(id, {:failed, _, _} = failed), do: [{id, failed}]
 
   defp flatten(id, outputs) when is_map(outputs),
-    do: for({out, df} <- outputs, do: {"#{id}.#{out}", df})
+    do: for({out, table} <- outputs, do: {"#{id}.#{out}", table})
 
   defp add_opts([]), do: []
   defp add_opts([parent]), do: [to: parent]
@@ -64,16 +74,16 @@ defmodule IxpipeCore do
 
   # Runic hashes a step from its fn and bound variables, so `id` sits inside
   # each fn: nodes with the same tool and config stay distinct steps.
-  defp step(%{id: id, tool: tool, config: config}, slots, arity) do
+  defp step(%{id: id, tool: tool, config: config}, ctx, slots, arity) do
     case arity do
       0 ->
-        Runic.step(fn _ -> run_tool(id, tool, inputs(slots, []), config) end, name: id)
+        Runic.step(fn _ -> run_tool(ctx, tool, inputs(slots, []), config) end, name: id)
 
       1 ->
-        Runic.step(fn x -> run_tool(id, tool, inputs(slots, [x]), config) end, name: id)
+        Runic.step(fn x -> run_tool(ctx, tool, inputs(slots, [x]), config) end, name: id)
 
       2 ->
-        Runic.step(fn x, y -> run_tool(id, tool, inputs(slots, [x, y]), config) end, name: id)
+        Runic.step(fn x, y -> run_tool(ctx, tool, inputs(slots, [x, y]), config) end, name: id)
     end
   end
 
@@ -81,18 +91,18 @@ defmodule IxpipeCore do
   def inputs(slots, args),
     do: Map.new(slots, fn {port, i, output} -> {port, pick(Enum.at(args, i), output)} end)
 
-  defp pick(%Explorer.DataFrame{} = df, _output), do: df
+  defp pick(%Table{} = table, _output), do: table
   defp pick({:failed, _, _} = failed, _output), do: failed
   defp pick(outputs, output) when is_map(outputs), do: Map.fetch!(outputs, output)
 
   # A failure is passed downstream as a value, so the run still settles and
   # reports the node that raised.
   @doc false
-  def run_tool(id, tool, inputs, config) do
+  def run_tool(%Context{id: id} = ctx, tool, inputs, config) do
     case Enum.find(Map.values(inputs), &match?({:failed, _, _}, &1)) do
       nil ->
         try do
-          tool.run(inputs, config)
+          tool.run(inputs, config, ctx)
         rescue
           e -> {:failed, id, Exception.message(e)}
         end
