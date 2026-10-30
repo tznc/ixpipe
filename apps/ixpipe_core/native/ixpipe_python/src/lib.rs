@@ -36,6 +36,9 @@ mod atoms {
     }
 }
 
+/// The pure-Python stdlib modules the allowed ones need (build.rs).
+const FROZEN: &rustpython_vm::frozen::FrozenLib = include!(concat!(env!("OUT_DIR"), "/frozen.rs"));
+
 /// The name tracebacks give the user's script.
 const SCRIPT: &str = "script.py";
 
@@ -481,7 +484,7 @@ fn interpret(
     let defs = rustpython_stdlib::stdlib_module_defs(&builder.ctx);
     builder = builder
         .add_native_modules(&defs)
-        .add_frozen_modules(rustpython_pylib::FROZEN_STDLIB)
+        .add_frozen_modules(FROZEN)
         .init_hook(move |vm| vm.set_user_signal_channel(rx));
     let interpreter = builder.build();
     *sender.lock().unwrap() = Some(tx);
