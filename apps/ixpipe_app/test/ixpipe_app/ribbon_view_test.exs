@@ -6,7 +6,14 @@ defmodule IxpipeApp.RibbonViewTest do
   alias Baguette.Test
   alias IxpipeApp.UI
 
-  @tool_tabs ["In/Out tab", "Preparation tab", "Join tab", "Parse tab", "Transform tab"]
+  @tool_tabs [
+    "In/Out tab",
+    "Preparation tab",
+    "Join tab",
+    "Parse tab",
+    "Transform tab",
+    "Macros tab"
+  ]
 
   setup do
     dir = Path.join(System.tmp_dir!(), "ixpipe-ribbon-#{System.unique_integer([:positive])}")
@@ -55,7 +62,10 @@ defmodule IxpipeApp.RibbonViewTest do
         commands(w)
       end)
 
-    assert Enum.sort(added) == Enum.map(IxpipeCore.Tools.names(), &"Add #{&1}")
+    # A macro is not added from a button but picked: "Use a macro".
+    assert Enum.sort(added) == Enum.map(IxpipeCore.Tools.names() -- ["macro"], &"Add #{&1}")
+    Test.click(w, "Macros tab")
+    assert [%{"a" => %{"phx-pick-file" => "use_macro"}}] = UI.find(w, "Use a macro")
   end
 
   test "a tool added from a tab lands on the canvas", %{w: w, pid: pid} do
@@ -101,7 +111,7 @@ defmodule IxpipeApp.RibbonViewTest do
         for label <- commands(w), do: {label, Test.icons(w, label)}
       end)
 
-    assert length(icons) == length(IxpipeCore.Tools.names())
+    assert length(icons) == length(IxpipeCore.Tools.names() -- ["macro"])
     for {label, names} <- icons, do: assert([_] = names, label)
 
     # Inputs and outputs share a format's icon; every other tool has its own.

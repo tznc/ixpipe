@@ -304,6 +304,13 @@ defmodule IxpipeCore.MacroTest do
                """)
     end
 
+    test "file?/1 tells a macro file from a workflow", %{dir: dir} do
+      assert Macro.file?(Path.join(dir, "big.yaml"))
+      refute Macro.file?(write(dir, "plain.yaml", "nodes: [#{orders()}]"))
+      assert Macro.file?(write(dir, "ports.yaml", "nodes: [{id: a, tool: macro_input}]"))
+      refute Macro.file?(write(dir, "broken.yaml", "nodes: ["))
+    end
+
     test "the macro header survives a round trip", %{dir: dir} do
       {:ok, spec} = Spec.decode(@big, path: Path.join(dir, "big.yaml"))
       assert Macro.macro?(spec)

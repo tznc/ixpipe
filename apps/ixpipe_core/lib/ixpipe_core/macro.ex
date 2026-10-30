@@ -100,6 +100,22 @@ defmodule IxpipeCore.Macro do
   def macro?(%Spec{macro: header, nodes: nodes}),
     do: header != nil or Enum.any?(nodes, &(&1.tool in [MacroInput, MacroOutput]))
 
+  @doc "Whether the workflow file at `path` is a macro, read without loading what it uses."
+  @spec file?(String.t()) :: boolean()
+  def file?(path) do
+    case YamlElixir.read_from_file(path) do
+      {:ok, %{} = doc} ->
+        Map.has_key?(doc, "macro") or
+          Enum.any?(
+            List.wrap(doc["nodes"]),
+            &(is_map(&1) and &1["tool"] in ~w(macro_input macro_output))
+          )
+
+      _ ->
+        false
+    end
+  end
+
   @doc """
   Loads the macro of every macro node in `spec` into `node.macro`, each
   `path` relative to `dir`, or `{:error, reason}`. `within` lists the files
