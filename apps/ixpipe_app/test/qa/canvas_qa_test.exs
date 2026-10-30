@@ -116,7 +116,7 @@ defmodule IxpipeApp.QA.CanvasTest do
       assert :ok = Playwright.await_text(page, "75%")
 
       QA.capture(page, "canvas-09-view", [
-        "Ribbon Home tab selected: Edit group (Undo dimmed, nothing left to undo; Redo) and View group (− 75% +, Restore view)",
+        "Ribbon Home tab selected: Edit group (undo and redo arrow icons beside Undo, dimmed, and Redo) and View group (zoom-out and zoom-in magnifier icons around 75%, a scan icon beside Restore view)",
         "All six cards (customers restored) compact (name and tool only), none overlapping, wires following them",
         "Nothing in the panels or header moved"
       ])
@@ -127,9 +127,51 @@ defmodule IxpipeApp.QA.CanvasTest do
       assert :ok = Playwright.await(page, role: "button", name: "Add input_sqlite")
 
       QA.capture(page, "canvas-10-ribbon", [
-        "Ribbon under the header: tabs Home, In/Out (selected: teal tint), Preparation, Join, Transform",
-        "Groups Input (CSV, Excel, Parquet, SQLite, Postgres) and Output (CSV, Excel, Parquet, SQLite), each named in a caption beneath, a rule between",
+        "Ribbon under the header: tabs Home, In/Out (selected: teal tint), Preparation, Join, Parse, Transform; header Save workflow has a floppy icon, Run workflow a play icon",
+        "Groups Input (CSV, Excel, Parquet, SQLite, Postgres) and Output (same formats), each command an icon (file, spreadsheet, box, database, server) before its name, a caption beneath each group",
         "No tools sidebar: the canvas starts at the left edge"
+      ])
+    end
+
+    test "the Transform and Preparation tabs' icons", %{page: page} do
+      Playwright.click(page, role: "tab", name: "Transform tab")
+      assert :ok = Playwright.await(page, role: "button", name: "Add transpose")
+
+      QA.capture(page, "canvas-11-ribbon-transform", [
+        "Transform tab selected: Aggregate (sigma icon, Summarize) and Reshape (table icon Cross tab, left-right arrows Transpose)",
+        "Icons are the same grey as their labels, 16px, vertically centred with the text"
+      ])
+
+      Playwright.click(page, role: "tab", name: "Preparation tab")
+      assert :ok = Playwright.await(page, role: "button", name: "Add data_cleansing")
+
+      QA.capture(page, "canvas-12-ribbon-preparation", [
+        "Columns (Select with a checklist icon, Formula with a function icon, Data cleansing with sparkles) and Rows (funnel Filter, arrows Sort, dice Sample, list-x Unique)",
+        "No command lacks an icon; nothing wraps or clips"
+      ])
+    end
+
+    test "keyboard shortcuts, and a tooltip naming one", %{page: page} do
+      assert :ok = Playwright.await(page, role: "button", name: "Select customers")
+      Playwright.click(page, "Remove customers")
+      Playwright.press(page, "Control+z")
+      assert :ok = Playwright.await(page, role: "button", name: "Select customers")
+      Playwright.press(page, "Control+=")
+      assert :ok = Playwright.await_text(page, "125%")
+      Playwright.press(page, "Control+0")
+      assert :ok = Playwright.await_text(page, "100%")
+      Playwright.press(page, "Control+Enter")
+      assert :ok = Playwright.await_text(page, "Run succeeded")
+      Playwright.press(page, "Control+s")
+      assert :ok = Playwright.await_text(page, "Saved sales.yaml")
+
+      Playwright.hover(page, role: "button", name: "Undo")
+      Process.sleep(1_000)
+
+      QA.capture(page, "canvas-13-shortcuts", [
+        "A tooltip 'Undo (Ctrl+Z)' under the Undo command",
+        "A 'Saved sales.yaml' toast top right and a green 'Run succeeded' callout over the canvas",
+        "Zoom back at 100%; all six cards present (customers restored by Ctrl+Z)"
       ])
     end
   end

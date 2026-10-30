@@ -69,4 +69,46 @@ defmodule IxpipeApp.RibbonViewTest do
     assert UI.find(w, "Tools") == []
     assert attrs(w, "View")["class"] =~ "flex-col"
   end
+
+  test "Home commands and the header buttons carry ixtable's icons", %{w: w} do
+    icons =
+      for label <- [
+            "Undo",
+            "Redo",
+            "Zoom out",
+            "Zoom in",
+            "Restore view",
+            "Save workflow",
+            "Run workflow"
+          ],
+          do: Test.icons(w, label)
+
+    assert icons == [
+             ["undo-2"],
+             ["redo-2"],
+             ["zoom-out"],
+             ["zoom-in"],
+             ["scan"],
+             ["save"],
+             ["play"]
+           ]
+  end
+
+  test "every tool command has its own icon", %{w: w} do
+    icons =
+      Enum.flat_map(@tool_tabs, fn tab ->
+        Test.click(w, tab)
+        for label <- commands(w), do: {label, Test.icons(w, label)}
+      end)
+
+    assert length(icons) == length(IxpipeCore.Tools.names())
+    for {label, names} <- icons, do: assert([_] = names, label)
+
+    # Inputs and outputs share a format's icon; every other tool has its own.
+    by_tool =
+      for {"Add " <> tool, [name]} <- icons,
+          do: {String.replace(tool, ~r/^(in|out)put_/, ""), name}
+
+    assert by_tool |> Enum.uniq() |> Enum.map(&elem(&1, 1)) |> then(&(&1 == Enum.uniq(&1)))
+  end
 end

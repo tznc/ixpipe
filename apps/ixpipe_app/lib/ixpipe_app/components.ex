@@ -66,22 +66,26 @@ defmodule IxpipeApp.Components do
   attr(:variant, :atom, default: :secondary, values: Map.keys(@variants))
   attr(:size, :atom, default: :md, values: [:sm, :md])
   attr(:class, :string, default: "")
-  attr(:rest, :global, include: ~w(type disabled accept default-name))
-  slot(:inner_block, required: true)
+  attr(:icon, :string, default: nil, doc: "a lucide icon name, drawn before the label")
+  attr(:rest, :global, include: ~w(type disabled accept default-name title))
+  slot(:inner_block)
 
   @doc """
   A button. `:primary` is the action that completes the task, at most one
   per view; `:secondary` is everything else; `:quiet` is for dense toolbars
   and lists; `:danger` is for delete, remove, drop and reset; `:link` for
   navigation such as breadcrumbs. Label it with a verb and an object.
+  An `icon` (lucide, as in ixtable) goes before the label, in its colour; an
+  icon-only button needs an `aria-label`. `title` is a tooltip, such as the
+  command's shortcut.
   """
   def button(assigns) do
     assigns = assign(assigns, :look, Map.fetch!(@variants, assigns.variant))
 
     ~H"""
     <button data-variant={@variant}
-      class={"flex-row items-center rounded-md cursor-pointer disabled:opacity-40 #{size(@size)} #{@look} #{@class}"}
-      {@rest}>{render_slot(@inner_block)}</button>
+      class={"flex-row items-center gap-1 rounded-md cursor-pointer disabled:opacity-40 #{size(@size)} #{@look} #{@class}"}
+      {@rest}><icon :if={@icon} name={@icon} class="size-4" />{render_slot(@inner_block)}</button>
     """
   end
 

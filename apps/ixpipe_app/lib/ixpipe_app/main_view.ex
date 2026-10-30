@@ -99,36 +99,41 @@ defmodule IxpipeApp.MainView do
     assigns = Map.put(assigns, :node, Enum.find(assigns.spec.nodes, &(&1.id == assigns.selected)))
 
     ~H"""
-    <div class="relative size-full flex-col bg-background text-foreground">
+    <div class="relative size-full flex-col bg-background text-foreground" phx-window-keydown="shortcut">
       <div class="flex-row items-center justify-between gap-3 px-4 py-3">
         <div class="flex-col gap-1">
           <.breadcrumb crumbs={[{"Workflows", "back"}, Path.basename(@path)]} />
           <.title>{@spec.name || Path.rootname(Path.basename(@path))}</.title>
         </div>
         <div class="flex-row items-center gap-2">
-          <.button phx-click="save" aria-label="Save workflow">Save workflow</.button>
-          <.button variant={:primary} phx-click="run" aria-label="Run workflow">Run workflow</.button>
+          <.button phx-click="save" icon="save" aria-label="Save workflow"
+            title={"Save workflow (#{shortcut("S")})"}>Save workflow</.button>
+          <.button variant={:primary} phx-click="run" icon="play" aria-label="Run workflow"
+            title={"Run workflow (#{shortcut("Enter")})"}>Run workflow</.button>
         </div>
       </div>
       <div class="h-px w-full bg-border" />
       <.ribbon tabs={ribbon_tabs()} selected={@tab}>
         <%= if @tab == "home" do %>
           <.ribbon_group label="Edit">
-            <.button size={:sm} variant={:quiet} phx-click="undo" disabled={@past == []} aria-label="Undo">Undo</.button>
-            <.button size={:sm} variant={:quiet} phx-click="redo" disabled={@future == []} aria-label="Redo">Redo</.button>
+            <.button size={:sm} variant={:quiet} phx-click="undo" disabled={@past == []} icon="undo-2"
+              aria-label="Undo" title={"Undo (#{shortcut("Z")})"}>Undo</.button>
+            <.button size={:sm} variant={:quiet} phx-click="redo" disabled={@future == []} icon="redo-2"
+              aria-label="Redo" title={"Redo (#{shortcut("Shift+Z")})"}>Redo</.button>
           </.ribbon_group>
           <.ribbon_group label="View">
-            <.button size={:sm} variant={:quiet} phx-click="zoom" phx-value-by="-1"
-              disabled={@zoom == hd(zooms())} aria-label="Zoom out">−</.button>
+            <.button size={:sm} variant={:quiet} phx-click="zoom" phx-value-by="-1" icon="zoom-out"
+              disabled={@zoom == hd(zooms())} aria-label="Zoom out" title={"Zoom out (#{shortcut("-")})"} />
             <.caption class="w-[40px] text-center">{@zoom}%</.caption>
-            <.button size={:sm} variant={:quiet} phx-click="zoom" phx-value-by="1"
-              disabled={@zoom == List.last(zooms())} aria-label="Zoom in">+</.button>
-            <.button size={:sm} variant={:quiet} phx-click="reset_view" aria-label="Restore view">Restore view</.button>
+            <.button size={:sm} variant={:quiet} phx-click="zoom" phx-value-by="1" icon="zoom-in"
+              disabled={@zoom == List.last(zooms())} aria-label="Zoom in" title={"Zoom in (#{shortcut("=")})"} />
+            <.button size={:sm} variant={:quiet} phx-click="reset_view" icon="scan" aria-label="Restore view"
+              title={"Restore view (#{shortcut("0")})"}>Restore view</.button>
           </.ribbon_group>
         <% else %>
           <.ribbon_group :for={{group, tools} <- ribbon_groups(@tab)} label={group}>
             <.button :for={tool <- tools} size={:sm} variant={:quiet} phx-click="add" phx-value-tool={tool}
-              aria-label={"Add #{tool}"}>{command_label(group, tool)}</.button>
+              icon={tool_icon(tool)} aria-label={"Add #{tool}"}>{command_label(group, tool)}</.button>
           </.ribbon_group>
         <% end %>
       </.ribbon>
@@ -275,6 +280,39 @@ defmodule IxpipeApp.MainView do
     x = max(px + round(dx * 100 / zoom), -min_x)
     y = max(py + round(dy * 100 / zoom), -min_y)
     {:noreply, %{assigns | pan: {x, y}}}
+  end
+
+  # Window shortcuts. Ctrl and Cmd (meta) are both the command key, so the
+  # same chords work on Linux, Windows and macOS.
+  def handle_event("shortcut", %{"key" => key} = keys, assigns) do
+    case {keys["ctrl"] or keys["meta"], String.downcase(key), keys["shift"]} do
+      {true, "z", false} ->
+        handle_event("undo", %{}, assigns)
+
+      {true, "z", true} ->
+        handle_event("redo", %{}, assigns)
+
+      {true, "y", _} ->
+        handle_event("redo", %{}, assigns)
+
+      {true, "s", _} ->
+        handle_event("save", %{}, assigns)
+
+      {true, "enter", _} ->
+        handle_event("run", %{}, assigns)
+
+      {true, zoom_in, _} when zoom_in in ["=", "+"] ->
+        handle_event("zoom", %{"by" => "1"}, assigns)
+
+      {true, "-", _} ->
+        handle_event("zoom", %{"by" => "-1"}, assigns)
+
+      {true, "0", _} ->
+        handle_event("reset_view", %{}, assigns)
+
+      _ ->
+        {:noreply, assigns}
+    end
   end
 
   def handle_event("ribbon", %{"tab" => tab}, assigns) do
@@ -790,6 +828,35 @@ defmodule IxpipeApp.MainView do
     "input_postgres" => "Input Postgres"
   }
   defp tool_label(tool), do: Map.get_lazy(@labels, tool, fn -> String.capitalize(tool) end)
+
+  # Lucide icons for the tool commands, as ixtable's ribbon has: an input and
+  # an output share their format's icon.
+  @icons %{
+    "csv" => "file-text",
+    "excel" => "file-spreadsheet",
+    "parquet" => "file-box",
+    "sqlite" => "database",
+    "postgres" => "server",
+    "select" => "list-checks",
+    "formula" => "square-function",
+    "data_cleansing" => "sparkles",
+    "filter" => "funnel",
+    "sort" => "arrow-up-down",
+    "sample" => "dices",
+    "unique" => "list-x",
+    "join" => "merge",
+    "union" => "layers",
+    "text_to_columns" => "columns-3",
+    "regex" => "regex",
+    "summarize" => "sigma",
+    "cross_tab" => "table-2",
+    "transpose" => "arrow-left-right"
+  }
+  defp tool_icon(tool), do: Map.get(@icons, String.replace(tool, ~r/^(in|out)put_/, ""))
+
+  # A shortcut as the platform writes it: Cmd on macOS, Ctrl elsewhere.
+  defp shortcut(key),
+    do: if(Baguette.platform() == :macos, do: "Cmd+", else: "Ctrl+") <> key
 
   defp ribbon_tabs, do: for({key, label, _} <- @ribbon, do: {key, label})
 

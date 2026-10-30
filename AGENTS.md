@@ -59,8 +59,15 @@ one-off style is a bug. `design_rules_test.exs` enforces what can be checked.
   a row of tabs over labelled command groups, under the canvas header.
   Home holds Edit (Undo, Redo) and View (zoom); In/Out, Preparation, Join,
   Parse and Transform hold the tools. Commands are `:quiet` small buttons with
-  a short noun ("CSV" in the Input group); the group name is a caption
-  beneath. Save and Run stay in the header, always visible.
+  a lucide icon (`<.button icon="undo-2">`, ixtable's: Undo2, Redo2, ZoomIn,
+  ZoomOut; each tool its own, an input and output sharing their format's)
+  and a short noun ("CSV" in the Input group); zoom is icon-only with an
+  `aria-label`. The group name is a caption beneath. Save (`save`) and Run
+  (`play`) stay in the header, always visible.
+- **Shortcuts** (`phx-window-keydown` on the canvas; Ctrl or Cmd): Z undo,
+  Shift+Z or Y redo, S save, Enter run, = and - zoom, 0 restore view. Each
+  command's `title` tooltip names its shortcut ("Undo (Ctrl+Z)"; Cmd on
+  macOS). Typing in a field fires none, and its own Ctrl+Z undoes its text.
 - **Navigation**: drill-in uses `<.breadcrumb>` ("Workflows / sales.yaml"),
   not a Back button.
 - **Words**: sentence case; tool names humanized ("Input CSV"); counts with
