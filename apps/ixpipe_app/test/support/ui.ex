@@ -18,6 +18,14 @@ defmodule IxpipeApp.UI do
         do: class
   end
 
+  @doc "Elements in `window` whose aria-label is `label`."
+  def find(window, label),
+    do:
+      for(
+        %{"a" => %{"aria-label" => ^label}} = el <- elements(Baguette.Test.tree(window)),
+        do: el
+      )
+
   @doc "What a user can do in `window` now: `{:click, label}` and `{:drag, label}`."
   def actions(window) do
     for %{"a" => attrs} = el <- elements(Baguette.Test.tree(window)),

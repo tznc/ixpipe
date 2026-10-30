@@ -102,8 +102,12 @@ element with gpui-kit when the host is built with its `playwright` feature.
 ## Layer 3: chaos QA
 
 `xvfb-run -a mix test apps/ixpipe_app/test --only chaos` runs a seeded monkey
-on the canvas: 70% clicks on a random button from the window's ARIA snapshot
-(`Baguette.Playwright.buttons/1`), 30% drags of a random node by up to 150px.
+on the canvas: 60% clicks on a random button from the window's ARIA snapshot
+(`Baguette.Playwright.buttons/1`), 30% drags of a random node by up to 150px,
+10% mouse-wheel scrolls of the canvas (`Baguette.Playwright.scroll/4`).
+Clicks on controls scrolled out of view (Playwright: "not stable",
+"outside of the viewport", "scrolling into view") are skipped, as a user
+would scroll first.
 After each step it checks the app process is alive, Playwright still
 answers, and the app log has no `panicked`. A failure prints the seed, the
 action trail and a screenshot (`chaos-<seed>-failure.png`). Replay with

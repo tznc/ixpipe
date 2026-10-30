@@ -31,7 +31,7 @@ defmodule IxpipeApp.MixProject do
       {:playwright_ex, "~> 0.15", only: :test},
       {:stream_data, "~> 1.1", only: :test},
       {:websockex, "~> 0.4", only: :test},
-      {:baguette, github: "ziinc/baguette", ref: "c6cfd517c65bb87d0c6fc09044f84b9151709677"}
+      {:baguette, github: "ziinc/baguette", ref: "148d8d2dd6a08b359e7f5b43239fefdd2615f3a7"}
     ]
   end
 end

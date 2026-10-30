@@ -10,8 +10,8 @@ desktop and mobile app in Elixir, rendered by GPUI through
   - `IxpipeCore.Spec` parses YAML workflows: `decode/1` (drafts), `validate/1` (runnable DAG), `to_yaml/1`.
   - `IxpipeCore.Edit` applies canvas edits (add, move, connect, remove) to drafts.
   - `IxpipeCore.run/1` compiles a spec to a [Runic](https://hex.pm/packages/runic) workflow and runs it.
-  - Tools (`IxpipeCore.Tools.*`) implement `IxpipeCore.Tool` over `Explorer.DataFrame`; register new ones in `IxpipeCore.Tools`.
-- `apps/ixpipe_app`: the Baguette UI. `IxpipeApp.MainView` is the main window: home (workflows in `IXPIPE_HOME`, default `~/ixpipe`) and the canvas. `IxpipeApp.Theme` holds the colour tokens; every colour class must resolve to one (tested).
+  - Tools (`IxpipeCore.Tools.*`) implement `IxpipeCore.Tool` over `Explorer.DataFrame`: `inputs/0`, `fields/0` (the settings schema the properties panel renders; `IxpipeCore.Config` parses and formats each type) and `run/2`. Register new ones in `IxpipeCore.Tools` and in the palette in `MainView`.
+- `apps/ixpipe_app`: the Baguette UI. `IxpipeApp.MainView` is the main window: home (workflows in `IXPIPE_HOME`, default `~/ixpipe`) and the canvas (tool palette, scrolling canvas with curved wires, properties panel driven by each tool's `fields/0`, results grid of the selected tool's first 50 rows after a run). `IxpipeApp.Theme` holds the colour tokens; every colour class must resolve to one (tested).
   - Rust is only for platform NIFs.
 
 ## Rules

@@ -51,13 +51,33 @@ defmodule IxpipeApp.QA.ChaosTest do
     nodes = for "Remove " <> id <- buttons, do: id
 
     case :rand.uniform(10) do
-      n when n <= 7 or nodes == [] -> {:click, Enum.random(buttons)}
-      _ -> {:drag, Enum.random(nodes), :rand.uniform(301) - 151, :rand.uniform(301) - 151}
+      n when n <= 6 or nodes == [] ->
+        {:click, Enum.random(buttons)}
+
+      n when n <= 9 ->
+        {:drag, Enum.random(nodes), :rand.uniform(301) - 151, :rand.uniform(301) - 151}
+
+      _ ->
+        {:scroll, :rand.uniform(401) - 201, :rand.uniform(401) - 201}
     end
   end
 
-  defp perform(page, {:click, label}), do: Playwright.click(page, label)
+  # A user scrolls to a control before clicking it; the monkey clicks
+  # whatever the window lists, so a control scrolled out of view (Playwright:
+  # "not stable", "outside of the viewport", "scrolling into view") is
+  # skipped, not a failure.
+  defp perform(page, {:click, label}) do
+    Playwright.click(%{page | opts: Keyword.put(page.opts, :timeout, 2_000)}, label)
+  rescue
+    error in RuntimeError ->
+      unless error.message =~ ~r/not stable|outside of the viewport|scrolling into view/,
+        do: reraise(error, __STACKTRACE__)
+
+      :skipped
+  end
+
   defp perform(page, {:drag, label, dx, dy}), do: Playwright.drag(page, label, dx, dy)
+  defp perform(page, {:scroll, dx, dy}), do: Playwright.scroll(page, "Canvas", dx, dy)
 
   defp check!(app, page) do
     unless Playwright.alive?(app), do: raise("the app exited")

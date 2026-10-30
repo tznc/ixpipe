@@ -38,9 +38,9 @@ defmodule IxpipeApp.QA.CanvasTest do
       assert :ok = Playwright.await_text(page, "customers")
 
       QA.capture(page, "canvas-01-sales", [
-        "A breadcrumb 'Workflows / sales.yaml' above the title 'sales'; Save workflow outlined, Run workflow teal",
-        "Six node cards, none overlapping, each with a red-outlined Remove button; lines join them",
-        "A light sidebar labelled 'Tools' lists all eight tools in sentence case (Input CSV, ...)"
+        "Breadcrumb 'Workflows / sales.yaml' over title 'sales'; Save workflow outlined, Run workflow teal",
+        "Six cards, none overlapping, joined by S-curves; a join's two inputs arrive one above the other",
+        "Tools sidebar (eleven tools) left; 'Nothing selected' panel right; Results says to select a tool"
       ])
     end
 
@@ -61,6 +61,42 @@ defmodule IxpipeApp.QA.CanvasTest do
       QA.capture(page, "canvas-03-connecting", [
         "The orders card has a teal border and teal tint; no other card does",
         "A teal-tinted callout bottom-left titled 'Connecting from orders'"
+      ])
+    end
+
+    test "selecting a tool shows its settings", %{page: page} do
+      Playwright.click(page, "Select joined")
+      assert :ok = Playwright.await(page, role: "textbox", name: "Join on")
+      assert Playwright.input_value(page, "Join on") == "customer_id"
+
+      QA.capture(page, "canvas-04-properties", [
+        "The joined card has a teal border; the right panel is titled 'joined', caption 'Join'",
+        "'Join on' label above an input reading customer_id; 'Join type' with inner highlighted in teal",
+        "Labels above inputs, all inputs the same width, nothing centred"
+      ])
+    end
+
+    test "results show the selected tool's rows after a run", %{page: page} do
+      Playwright.click(page, "Run workflow")
+      assert :ok = Playwright.await_text(page, "Run succeeded")
+      Playwright.click(page, "Select totals")
+      assert :ok = Playwright.await_text(page, "totals · 3 rows")
+
+      QA.capture(page, "canvas-05-results", [
+        "Results under the canvas: caption 'totals · 3 rows', header row 'name' and 'total' in label style",
+        "Three rows: Ada 80, Bob 5, Cy 12 (in any order); totals right-aligned",
+        "The right panel shows totals' Group by and Aggregates settings"
+      ])
+    end
+
+    test "an invalid setting shows why, under its input", %{page: page} do
+      Playwright.click(page, "Select joined")
+      Playwright.fill(page, "Join on", "")
+      assert :ok = Playwright.await_text(page, "Required")
+
+      QA.capture(page, "canvas-06-invalid", [
+        "Under 'Join on' a red caption reads 'Required'; the input is empty",
+        "Nothing else on the screen moved or changed colour"
       ])
     end
   end

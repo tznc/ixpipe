@@ -47,7 +47,7 @@ defmodule IxpipeApp.E2E.WorkflowPlaywrightTest do
   test "builds and saves a workflow on the canvas", %{page: page, workflow: workflow} do
     assert :ok = Playwright.await_text(page, "orders")
     Playwright.click(page, "Add sort")
-    assert :ok = Playwright.await_text(page, "sort_1")
+    assert :ok = Playwright.await(page, role: "button", name: "Select sort_1")
 
     Playwright.drag(page, "sort_1", 220, 0)
     Playwright.click(page, "Connect from orders")

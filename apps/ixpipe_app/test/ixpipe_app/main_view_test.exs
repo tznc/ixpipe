@@ -126,4 +126,20 @@ defmodule IxpipeApp.MainViewTest do
     Test.click(w, "Connect to sort_1 in")
     assert IxpipeApp.UI.unresolved_colours(w) == []
   end
+
+  test "the canvas scrolls to every node: its surface covers the furthest one", ctx do
+    w = start(ctx, path: Path.join(ctx.dir, "sales.yaml"))
+    Test.click(w, "Add sort")
+    Test.drag(w, "sort_1", 900, 700)
+
+    [surface] = IxpipeApp.UI.find(w, "Canvas surface")
+    [scroller] = IxpipeApp.UI.find(w, "Canvas")
+    assert scroller["a"]["class"] =~ "overflow-scroll"
+
+    [_, width] = Regex.run(~r/\bw-\[(\d+)px\]/, surface["a"]["class"])
+    [_, height] = Regex.run(~r/\bh-\[(\d+)px\]/, surface["a"]["class"])
+    # sort_1 now sits at 970, 770; the surface reaches past its far edge.
+    assert String.to_integer(width) >= 970 + 200
+    assert String.to_integer(height) >= 770 + 100
+  end
 end
