@@ -103,9 +103,11 @@ defmodule IxpipeCore.PostgresTest do
 
   # A DuckDB table needs a column, so a statement that returns none fails.
   test "a statement without columns says so", %{dir: dir} do
-    assert_raise RuntimeError, "The query returned no columns. Write a query that selects some.", fn ->
-      read(dir, %{"query" => "UPDATE ixpipe_orders SET id = id WHERE false"})
-    end
+    assert_raise RuntimeError,
+                 "The query returned no columns. Write a query that selects some.",
+                 fn ->
+                   read(dir, %{"query" => "UPDATE ixpipe_orders SET id = id WHERE false"})
+                 end
   end
 
   test "surfaces the database's error", %{dir: dir} do
