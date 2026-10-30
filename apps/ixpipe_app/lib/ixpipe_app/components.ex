@@ -1,0 +1,183 @@
+defmodule IxpipeApp.Components do
+  @moduledoc """
+  The shared components of the design language (AGENTS.md). Screens compose
+  these; a one-off style is a bug. Text sizes and weights live only here
+  (tested in `design_rules_test.exs`).
+  """
+  use Phoenix.Component
+
+  ## Type scale: five steps. Colour stays with the caller.
+
+  attr(:class, :string, default: "")
+  slot(:inner_block, required: true)
+
+  @doc "The page title: one per view."
+  def title(assigns),
+    do: ~H"""
+    <text class={"text-xl font-semibold " <> @class}>{render_slot(@inner_block)}</text>
+    """
+
+  attr(:class, :string, default: "")
+  slot(:inner_block, required: true)
+
+  @doc "Card, dialog and panel-section titles."
+  def section(assigns),
+    do: ~H"""
+    <text class={"text-base font-semibold " <> @class}>{render_slot(@inner_block)}</text>
+    """
+
+  attr(:class, :string, default: "")
+  slot(:inner_block, required: true)
+
+  @doc "Content."
+  def body(assigns),
+    do: ~H"""
+    <text class={"text-sm " <> @class}>{render_slot(@inner_block)}</text>
+    """
+
+  attr(:class, :string, default: "")
+  slot(:inner_block, required: true)
+
+  @doc "Field labels, column headers, nav headings."
+  def label(assigns),
+    do: ~H"""
+    <text class={"text-sm font-medium text-muted-foreground " <> @class}>{render_slot(@inner_block)}</text>
+    """
+
+  attr(:class, :string, default: "")
+  slot(:inner_block, required: true)
+
+  @doc "Hints, counts, timestamps."
+  def caption(assigns),
+    do: ~H"""
+    <text class={"text-xs text-muted-foreground " <> @class}>{render_slot(@inner_block)}</text>
+    """
+
+  ## Buttons
+
+  @variants %{
+    primary: "bg-primary text-primary-foreground hover:opacity-90",
+    secondary: "border border-border bg-background hover:bg-muted",
+    quiet: "hover:bg-muted",
+    danger: "border border-danger text-danger hover:bg-danger/12",
+    link: "text-link hover:opacity-80"
+  }
+
+  attr(:variant, :atom, default: :secondary, values: Map.keys(@variants))
+  attr(:size, :atom, default: :md, values: [:sm, :md])
+  attr(:class, :string, default: "")
+  attr(:rest, :global, include: ~w(type disabled))
+  slot(:inner_block, required: true)
+
+  @doc """
+  A button. `:primary` is the action that completes the task, at most one
+  per view; `:secondary` is everything else; `:quiet` is for dense toolbars
+  and lists; `:danger` is for delete, remove, drop and reset; `:link` for
+  navigation such as breadcrumbs. Label it with a verb and an object.
+  """
+  def button(assigns) do
+    assigns = assign(assigns, :look, Map.fetch!(@variants, assigns.variant))
+
+    ~H"""
+    <button data-variant={@variant}
+      class={"flex-row items-center rounded-md cursor-pointer disabled:opacity-40 #{size(@size)} #{@look} #{@class}"}
+      {@rest}>{render_slot(@inner_block)}</button>
+    """
+  end
+
+  defp size(:sm), do: "px-2 py-1 text-xs font-medium"
+  defp size(:md), do: "px-3 py-1 text-sm font-medium"
+
+  ## Status
+
+  attr(:tone, :atom, required: true, values: [:info, :success, :warning, :danger])
+  attr(:title, :string, required: true)
+  attr(:class, :string, default: "")
+  slot(:inner_block)
+
+  @doc """
+  A tinted callout: a tone mark, a one-line title, then what to do. Errors
+  read "what happened. what to do."
+  """
+  def callout(assigns) do
+    assigns = assign(assigns, :colour, tone_colour(assigns.tone))
+
+    ~H"""
+    <div data-callout={@tone}
+      class={"flex-row items-start gap-2 p-3 rounded-md border border-#{@colour} bg-#{@colour}/12 #{@class}"}>
+      <div class={"size-2 mt-1 rounded-full bg-#{@colour}"} />
+      <div class="flex-col gap-1">
+        <text class="text-sm font-semibold text-foreground">{@title}</text>
+        <text :if={@inner_block != []} class="text-sm text-foreground">{render_slot(@inner_block)}</text>
+      </div>
+    </div>
+    """
+  end
+
+  attr(:tone, :atom, default: :neutral, values: [:neutral, :success, :warning, :danger])
+  slot(:inner_block, required: true)
+
+  @doc "A pill from one fixed vocabulary per domain."
+  def status_badge(assigns) do
+    assigns = assign(assigns, :colour, tone_colour(assigns.tone))
+
+    ~H"""
+    <div data-badge={@tone} class={"px-2 rounded-full bg-#{@colour}/12"}>
+      <text class="text-xs text-foreground">{render_slot(@inner_block)}</text>
+    </div>
+    """
+  end
+
+  defp tone_colour(:info), do: "primary"
+  defp tone_colour(:neutral), do: "muted-foreground"
+  defp tone_colour(tone), do: Atom.to_string(tone)
+
+  ## Layout pieces
+
+  attr(:title, :string, required: true)
+  slot(:inner_block, required: true)
+  slot(:action)
+
+  @doc "What an empty list or canvas shows: a title, one sentence, at most one action."
+  def empty_state(assigns),
+    do: ~H"""
+    <div class="flex-col items-center gap-2 p-6">
+      <text class="text-base font-semibold text-foreground">{@title}</text>
+      <text class="text-sm text-muted-foreground">{render_slot(@inner_block)}</text>
+      {render_slot(@action)}
+    </div>
+    """
+
+  attr(:crumbs, :list,
+    required: true,
+    doc: "`{label, event}` pairs, then the current item's label"
+  )
+
+  @doc "Drill-in navigation: earlier crumbs are links, the last is plain text."
+  def breadcrumb(assigns) do
+    {links, [current]} = Enum.split(assigns.crumbs, -1)
+    assigns = assign(assigns, links: links, current: current)
+
+    ~H"""
+    <div class="flex-row items-center gap-1">
+      <div :for={{label, event} <- @links} class="flex-row items-center gap-1">
+        <.button variant={:link} size={:sm} class="px-0" phx-click={event} aria-label={label}>{label}</.button>
+        <text class="text-xs text-muted-foreground">/</text>
+      </div>
+      <text class="text-xs text-muted-foreground">{@current}</text>
+    </div>
+    """
+  end
+
+  attr(:message, :string, required: true)
+
+  @doc "A transient success note, top right; it never moves the layout."
+  def toast(assigns),
+    do: ~H"""
+    <div data-toast="success"
+      class="absolute right-[16px] top-[16px] flex-row items-center gap-2 p-3 rounded-md border border-border bg-background shadow-md">
+      <div class="size-2 rounded-full bg-success" />
+      <text class="text-sm text-foreground">{@message}</text>
+    </div>
+    """
+end

@@ -27,6 +27,39 @@ desktop and mobile app in Elixir, rendered by GPUI through
 - When recommending actions, give options A/B/C plus a recommendation. Ask when something is ambiguous.
 - No PRs unless asked. PR descriptions are 1-2 lines plus the session link.
 
+## Design language
+
+ixpipe follows ixtable's design language
+([tznc/ixtable `docs/decisions/design-language.md`](https://github.com/tznc/ixtable/blob/main/docs/decisions/design-language.md)).
+`IxpipeApp.Components` implements it; screens compose those components, and a
+one-off style is a bug. `design_rules_test.exs` enforces what can be checked.
+
+- **Colour** (`IxpipeApp.Theme`): gpui-kit's greys plus one accent, the
+  ixtable teal `#0DB9B6` with white text (links `#0A7C7A`). Colour carries
+  meaning (selection, status, danger), never decoration. Status is a tint
+  plus text (`<.callout>`, `<.status_badge>`), never text colour alone.
+  Selection is a teal tint and border. Disabled is 40% opacity.
+- **Type scale**: `<.title>` (one per view), `<.section>`, `<.body>`,
+  `<.label>`, `<.caption>`. Raw `text-*` sizes and `font-*` weights are
+  allowed only in `components.ex` (tested).
+- **Buttons** (`<.button variant=…>`): `:primary` completes the task, at most
+  one per view (tested); `:secondary` for everything else; `:quiet` in
+  dense lists and toolbars; `:danger` for delete, remove, drop and reset
+  (tested); `:link` for breadcrumbs. Label with a verb and an object
+  ("Save workflow", "Run workflow").
+- **Layout**: left-aligned; only empty states and dialogs are centred.
+  Spacing on the 4px scale: `gap-1` in a control group, `gap-3` between
+  fields, `gap-6` between sections, `p-4` in a card.
+- **Feedback never moves the layout**: run results and modes are a callout
+  over the canvas; transient success ("Saved sales.yaml") is a `<.toast>`
+  top right that clears after 6 s; errors read "what happened. what to do."
+- **Empty states**: every list or canvas that can be empty has one: a
+  title, one sentence, at most one action (tested on home and canvas).
+- **Navigation**: drill-in uses `<.breadcrumb>` ("Workflows / sales.yaml"),
+  not a Back button.
+- **Words**: sentence case; tool names humanized ("Input CSV"); counts with
+  correct plurals ("1 row", "4 rows"); dates relative within a week.
+
 ## Toolchain
 
 - OTP 29.1.2 and Elixir 1.20.4 (match baguette's CI).

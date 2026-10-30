@@ -20,9 +20,9 @@ defmodule IxpipeApp.QA.CanvasTest do
       assert :ok = Playwright.await_text(page, "scratch.yaml")
 
       QA.capture(page, "home-01-list", [
-        "A 'Workflows' heading with a 'New workflow' button on the right",
-        "sales.yaml and scratch.yaml listed as full-width rows",
-        "Light theme: white background, dark text, blue primary button"
+        "A 'Workflows' title, left-aligned, with a teal 'New workflow' button on the right",
+        "sales.yaml and scratch.yaml listed as rows, each with a muted relative time on the right",
+        "Greyscale apart from the one teal button; nothing centred"
       ])
     end
   end
@@ -38,19 +38,19 @@ defmodule IxpipeApp.QA.CanvasTest do
       assert :ok = Playwright.await_text(page, "customers")
 
       QA.capture(page, "canvas-01-sales", [
-        "Six node cards, none overlapping, inside the canvas area",
-        "Lines join orders and customers to joined, then joined to totals to sorted to out",
-        "The tool palette on the left lists all eight tools"
+        "A breadcrumb 'Workflows / sales.yaml' above the title 'sales'; Save workflow outlined, Run workflow teal",
+        "Six node cards, none overlapping, each with a red-outlined Remove button; lines join them",
+        "A light sidebar labelled 'Tools' lists all eight tools in sentence case (Input CSV, ...)"
       ])
     end
 
     test "run shows row counts on every node", %{page: page} do
-      Playwright.click(page, "Run")
+      Playwright.click(page, "Run workflow")
       assert :ok = Playwright.await_text(page, "Run succeeded")
 
       QA.capture(page, "canvas-02-run", [
-        "The toolbar status reads 'Run succeeded'",
-        "Every node card shows a row count: orders 4, customers 3, joined 4, totals 3, sorted 3, out 3"
+        "A green-tinted callout bottom-left titled 'Run succeeded'; nothing in the layout moved",
+        "Every node card shows a green row-count pill: orders 4, customers 3, joined 4, totals 3, sorted 3, out 3"
       ])
     end
 
@@ -59,8 +59,8 @@ defmodule IxpipeApp.QA.CanvasTest do
       assert :ok = Playwright.await_text(page, "Connecting from orders")
 
       QA.capture(page, "canvas-03-connecting", [
-        "The orders card has a blue border; no other card does",
-        "The toolbar status reads 'Connecting from orders'"
+        "The orders card has a teal border and teal tint; no other card does",
+        "A teal-tinted callout bottom-left titled 'Connecting from orders'"
       ])
     end
   end

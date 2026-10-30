@@ -38,9 +38,9 @@ defmodule IxpipeApp.MainViewTest do
 
     Test.click(w, "Open sales.yaml")
     assert Test.text(w) =~ "orders"
-    assert Test.text(w) =~ "input_csv"
+    assert Test.text(w) =~ "Input CSV"
 
-    Test.click(w, "Back")
+    Test.click(w, "Workflows")
     assert Test.text(w) =~ "sales.yaml"
   end
 
@@ -52,7 +52,7 @@ defmodule IxpipeApp.MainViewTest do
   test "New workflow creates an empty file and opens it", ctx do
     w = start(ctx)
     Test.click(w, "New workflow")
-    Test.click(w, "Save")
+    Test.click(w, "Save workflow")
     assert %Spec{nodes: []} = saved(ctx.dir, "untitled-1.yaml")
   end
 
@@ -65,7 +65,7 @@ defmodule IxpipeApp.MainViewTest do
     Test.click(w, "Connect from orders")
     Test.click(w, "Connect to sort_1 in")
     Test.drag(w, "orders", 10, 5)
-    Test.click(w, "Save")
+    Test.click(w, "Save workflow")
 
     spec = saved(ctx.dir, "sales.yaml")
     assert [orders, sort] = spec.nodes
@@ -81,13 +81,13 @@ defmodule IxpipeApp.MainViewTest do
 
     Test.click(w, "Remove orders")
     refute Test.text(w) =~ "orders"
-    Test.click(w, "Save")
+    Test.click(w, "Save workflow")
     assert [%{id: "sort_1", inputs: %{}}] = saved(ctx.dir, "sales.yaml").nodes
   end
 
   test "Run reports row counts", ctx do
     w = start(ctx, path: Path.join(ctx.dir, "sales.yaml"))
-    Test.click(w, "Run")
+    Test.click(w, "Run workflow")
     assert Test.text(w) =~ "Run succeeded"
     assert Test.text(w) =~ "2 rows"
   end
@@ -95,7 +95,7 @@ defmodule IxpipeApp.MainViewTest do
   test "Run reports an incomplete workflow instead of running it", ctx do
     w = start(ctx, path: Path.join(ctx.dir, "sales.yaml"))
     Test.click(w, "Add sort")
-    Test.click(w, "Run")
+    Test.click(w, "Run workflow")
     assert Test.text(w) =~ "sort_1: expects inputs [in], got []"
   end
 
@@ -106,7 +106,7 @@ defmodule IxpipeApp.MainViewTest do
     )
 
     w = start(ctx, path: Path.join(ctx.dir, "bad.yaml"))
-    Test.click(w, "Run")
+    Test.click(w, "Run workflow")
     assert Test.text(w) =~ "orders failed"
   end
 

@@ -39,7 +39,7 @@ defmodule IxpipeApp.E2E.WorkflowPlaywrightTest do
 
   test "opens the workflow and runs it", %{page: page} do
     assert :ok = Playwright.await_text(page, "orders")
-    Playwright.click(page, "Run")
+    Playwright.click(page, "Run workflow")
     assert :ok = Playwright.await_text(page, "Run succeeded")
     assert :ok = Playwright.await_text(page, "2 rows")
   end
@@ -52,8 +52,8 @@ defmodule IxpipeApp.E2E.WorkflowPlaywrightTest do
     Playwright.drag(page, "sort_1", 220, 0)
     Playwright.click(page, "Connect from orders")
     Playwright.click(page, "Connect to sort_1 in")
-    Playwright.click(page, "Save")
-    assert :ok = Playwright.await_text(page, "Saved")
+    Playwright.click(page, "Save workflow")
+    assert :ok = Playwright.await_text(page, "Saved e2e.yaml")
 
     File.write!(Path.join(System.tmp_dir!(), "ixpipe-canvas.png"), Playwright.screenshot(page))
 

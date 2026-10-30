@@ -5,14 +5,15 @@ defmodule IxpipeApp.UI do
   @not_colours ~w(xs sm base lg xl 2xl 3xl left right center 2 l-2 l-4)
 
   @doc "Colour classes in `window` that name no theme token."
-  def unresolved_colours(window) do
-    %{"theme" => theme, "root" => root} = Baguette.Host.last_frame(window)
+  def unresolved_colours(%{"theme" => theme, "root" => root}), do: unresolved(theme, root)
+  def unresolved_colours(window), do: unresolved_colours(Baguette.Host.last_frame(window))
 
+  defp unresolved(theme, root) do
     for class <- classes(root),
         [_, value] <- [Regex.run(~r/^(?:[a-z]+:)?(?:bg|text|border|stroke)-(.+)$/, class)],
         value not in @not_colours,
         not String.starts_with?(value, "["),
-        not Map.has_key?(theme, value),
+        not Map.has_key?(theme, value |> String.split("/") |> hd()),
         uniq: true,
         do: class
   end
