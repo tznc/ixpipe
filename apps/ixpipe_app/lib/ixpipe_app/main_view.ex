@@ -22,15 +22,23 @@ defmodule IxpipeApp.MainView do
   @phone_width 640
   @panes [{"canvas", "Canvas"}, {"properties", "Properties"}, {"results", "Results"}]
   # The ribbon's tabs: Home edits and views the workflow; the rest hold the
-  # tools, by category, in labelled groups.
+  # tools, by category, in labelled groups. A group of rows (In/Out's files
+  # over databases) stacks them on a desktop and runs them on in one row,
+  # scrolling sideways, on a phone.
   @ribbon [
     {"home", "Home", []},
     {"inout", "In/Out",
      [
        {"Input",
-        ~w(input_csv input_excel input_parquet input_json input_sqlite input_postgres input_mysql input_sqlserver input_bigquery)},
+        [
+          ~w(input_csv input_excel input_parquet input_json),
+          ~w(input_sqlite input_postgres input_mysql input_sqlserver input_bigquery)
+        ]},
        {"Output",
-        ~w(output_csv output_excel output_parquet output_json output_sqlite output_postgres output_mysql output_sqlserver)}
+        [
+          ~w(output_csv output_excel output_parquet output_json),
+          ~w(output_sqlite output_postgres output_mysql output_sqlserver)
+        ]}
      ]},
     {"prepare", "Preparation",
      [
@@ -149,8 +157,12 @@ defmodule IxpipeApp.MainView do
           </.ribbon_group>
         <% else %>
           <.ribbon_group :for={{group, tools} <- ribbon_groups(@tab)} label={group}>
-            <.button :for={tool <- tools} size={touch(@phone, :sm)} variant={:quiet} phx-click="add" phx-value-tool={tool}
-              icon={tool_icon(tool)} aria-label={"Add #{tool}"}>{command_label(group, tool)}</.button>
+            <div class="flex-col gap-1">
+              <div :for={row <- ribbon_rows(tools, @phone)} data-row="true" class="flex-row items-center gap-1">
+                <.button :for={tool <- row} size={touch(@phone, :sm)} variant={:quiet} phx-click="add" phx-value-tool={tool}
+                  icon={tool_icon(tool)} aria-label={"Add #{tool}"}>{command_label(group, tool)}</.button>
+              </div>
+            </div>
           </.ribbon_group>
         <% end %>
       </.ribbon>
@@ -988,6 +1000,10 @@ defmodule IxpipeApp.MainView do
 
   defp ribbon_groups(tab),
     do: Enum.find_value(@ribbon, [], fn {key, _, groups} -> key == tab && groups end)
+
+  defp ribbon_rows([row | _] = rows, false) when is_list(row), do: rows
+  defp ribbon_rows([row | _] = rows, true) when is_list(row), do: [Enum.concat(rows)]
+  defp ribbon_rows(tools, _phone), do: [tools]
 
   # In the Input and Output groups the group names the direction: "CSV".
   defp command_label(group, tool),

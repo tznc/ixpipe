@@ -106,7 +106,9 @@ defmodule IxpipeApp.Components do
   The ribbon (as in ixtable, after Access): a row of tabs over the selected
   tab's labelled command groups (`ribbon_group/1`). Tabs are labelled
   "<Label> tab" and send `event` with `phx-value-tab`. Both rows scroll
-  sideways when the window is too narrow for them.
+  sideways when the window is too narrow for them. On a desktop the
+  commands keep room for two rows of buttons on every tab, so switching
+  tabs never moves the canvas.
   """
   def ribbon(assigns) do
     ~H"""
@@ -116,7 +118,7 @@ defmodule IxpipeApp.Components do
           aria-label={"#{label} tab"} phx-click={@event} phx-value-tab={key}
           class={"#{tab_size(@touch)} rounded-md cursor-pointer text-xs " <> tab_look(key == @selected)}>{label}</button>
       </div>
-      <div class="flex-row items-stretch px-2 py-1 overflow-x-auto">{render_slot(@inner_block)}</div>
+      <div class={"flex-row items-stretch px-2 py-1 overflow-x-auto" <> if(@touch, do: "", else: " min-h-[88px]")}>{render_slot(@inner_block)}</div>
       <div class="h-px w-full bg-border" />
     </div>
     """
