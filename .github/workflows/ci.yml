@@ -27,7 +27,7 @@ jobs:
             deps
             _build
           key: mix-test-${{ runner.os }}-${{ env.OTP_VERSION }}-${{ hashFiles('mix.lock') }}
-      # DuckDB (bundled C++) takes ~25 minutes to compile from scratch.
+      # The NIFs' Rust builds; libduckdb itself is downloaded prebuilt.
       - uses: actions/cache@v4
         with:
           path: |
@@ -85,7 +85,7 @@ jobs:
           key: cargo-e2e-${{ runner.os }}-${{ hashFiles('mix.lock', 'apps/ixpipe_core/native/*/Cargo.lock') }}
       - name: Release with gpui-playwright
         run: BAGUETTE_HOST_FEATURES=playwright MIX_ENV=prod mix release ixpipe --overwrite
-        timeout-minutes: 75
+        timeout-minutes: 40
       - name: End-to-end tests
         run: xvfb-run -a -s "-screen 0 1600x1000x24" mix test --only playwright
         timeout-minutes: 10
