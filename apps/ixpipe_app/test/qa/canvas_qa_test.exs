@@ -146,7 +146,8 @@ defmodule IxpipeApp.QA.CanvasTest do
       assert :ok = Playwright.await(page, role: "button", name: "Add data_cleansing")
 
       QA.capture(page, "canvas-12-ribbon-preparation", [
-        "Columns (Select with a checklist icon, Formula with a function icon, Data cleansing with sparkles) and Rows (funnel Filter, arrows Sort, dice Sample, list-x Unique)",
+        "Columns (Select with a checklist icon, Formula with a function icon, Data cleansing with sparkles, Auto field with a wand, Imputation with a paint bucket) and Rows (funnel Filter, arrows Sort, dice Sample, list-x Unique)",
+        "Sequence: Record ID (hash), Running total (trending line), Tile (stacked columns), Generate rows (list-plus)",
         "No command lacks an icon; nothing wraps or clips"
       ])
     end

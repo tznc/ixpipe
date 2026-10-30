@@ -32,10 +32,15 @@ defmodule IxpipeApp.MainView do
      ]},
     {"prepare", "Preparation",
      [
-       {"Columns", ~w(select formula data_cleansing)},
-       {"Rows", ~w(filter sort sample unique)}
+       {"Columns", ~w(select formula data_cleansing auto_field imputation)},
+       {"Rows", ~w(filter sort sample unique)},
+       {"Sequence", ~w(record_id running_total tile generate_rows)}
      ]},
-    {"join", "Join", [{"Combine", ~w(join union)}]},
+    {"join", "Join",
+     [
+       {"Combine", ~w(join union join_multiple append_fields)},
+       {"Match", ~w(find_replace fuzzy_match)}
+     ]},
     {"parse", "Parse", [{"Split", ~w(text_to_columns regex)}]},
     {"transform", "Transform",
      [{"Aggregate", ~w(summarize)}, {"Reshape", ~w(cross_tab transpose)}]}
@@ -890,7 +895,15 @@ defmodule IxpipeApp.MainView do
     "text_to_columns" => "Text to columns",
     "regex" => "RegEx",
     "data_cleansing" => "Data cleansing",
-    "input_postgres" => "Input Postgres"
+    "input_postgres" => "Input Postgres",
+    "record_id" => "Record ID",
+    "running_total" => "Running total",
+    "generate_rows" => "Generate rows",
+    "auto_field" => "Auto field",
+    "find_replace" => "Find replace",
+    "append_fields" => "Append fields",
+    "join_multiple" => "Join multiple",
+    "fuzzy_match" => "Fuzzy match"
   }
   defp tool_label(tool), do: Map.get_lazy(@labels, tool, fn -> String.capitalize(tool) end)
 
@@ -915,7 +928,17 @@ defmodule IxpipeApp.MainView do
     "regex" => "regex",
     "summarize" => "sigma",
     "cross_tab" => "table-2",
-    "transpose" => "arrow-left-right"
+    "transpose" => "arrow-left-right",
+    "record_id" => "hash",
+    "running_total" => "trending-up",
+    "tile" => "chart-column-stacked",
+    "generate_rows" => "list-plus",
+    "imputation" => "paint-bucket",
+    "auto_field" => "wand-sparkles",
+    "find_replace" => "replace",
+    "append_fields" => "between-horizontal-start",
+    "join_multiple" => "combine",
+    "fuzzy_match" => "scan-search"
   }
   defp tool_icon(tool), do: Map.get(@icons, String.replace(tool, ~r/^(in|out)put_/, ""))
 
