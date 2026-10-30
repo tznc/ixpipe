@@ -20,7 +20,7 @@ defmodule IxpipeApp.QA.EverydayToolsTest do
       - {id: totals, tool: running_total, position: {x: 460, y: 30}, inputs: {in: ids}, config: {columns: [amount]}}
       - id: joined
         tool: join_multiple
-        position: {x: 240, y: 210}
+        position: {x: 680, y: 120}
         inputs: {in1: orders, in2: customers}
         config: {on: [customer_id]}
       - {id: days, tool: generate_rows, position: {x: 460, y: 210}, config: {name: n, init: "1", condition: "n <= 5", loop: "n + 1"}}
@@ -40,7 +40,7 @@ defmodule IxpipeApp.QA.EverydayToolsTest do
     QA.capture(page, "everyday-01-run", [
       "Cards: orders, customers, ids (Record ID), totals (Running total), joined (Join multiple, In ports in1 to in4, two wired), days (Generate rows, no wire in) with green row pills: ids 4, totals 4, joined 4, days 5",
       "Results shows totals: RecordID 1 to 4 first, then id, customer_id, amount, and RunningTotal_amount 50, 55, 85, 97",
-      "Nothing overlaps; wires into joined arrive at in1 and in2"
+      "Nothing overlaps and the callout covers no card; wires into joined (right) arrive at in1 and in2"
     ])
   end
 

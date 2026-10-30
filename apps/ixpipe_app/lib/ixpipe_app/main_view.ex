@@ -34,7 +34,7 @@ defmodule IxpipeApp.MainView do
      [
        {"Columns", ~w(select formula data_cleansing auto_field imputation)},
        {"Rows", ~w(filter sort sample unique)},
-       {"Sequence", ~w(record_id running_total tile generate_rows)}
+       {"Sequence", ~w(record_id tile generate_rows)}
      ]},
     {"join", "Join",
      [
@@ -43,7 +43,7 @@ defmodule IxpipeApp.MainView do
      ]},
     {"parse", "Parse", [{"Split", ~w(text_to_columns regex)}]},
     {"transform", "Transform",
-     [{"Aggregate", ~w(summarize)}, {"Reshape", ~w(cross_tab transpose)}]}
+     [{"Aggregate", ~w(summarize running_total)}, {"Reshape", ~w(cross_tab transpose)}]}
   ]
 
   def mount(args) do

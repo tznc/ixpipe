@@ -58,13 +58,12 @@ defmodule IxpipeApp.RibbonViewTest do
     assert Enum.sort(added) == Enum.map(IxpipeCore.Tools.names(), &"Add #{&1}")
   end
 
-  test "the everyday tools sit in Preparation and Join, humanised", %{w: w} do
+  test "the everyday tools sit in Preparation, Join and Transform, humanised", %{w: w} do
     Test.click(w, "Preparation tab")
     assert attrs(w, "Sequence")["role"] == "group"
 
     for label <- [
           "Record ID",
-          "Running total",
           "Tile",
           "Generate rows",
           "Imputation",
@@ -77,6 +76,10 @@ defmodule IxpipeApp.RibbonViewTest do
 
     for label <- ["Find replace", "Append fields", "Join multiple", "Fuzzy match"],
         do: assert(Test.text(w) =~ label, label)
+
+    # With Summarize, as Alteryx's Transform has it.
+    Test.click(w, "Transform tab")
+    assert Test.text(w) =~ "Running total"
   end
 
   test "a tool added from a tab lands on the canvas", %{w: w, pid: pid} do
