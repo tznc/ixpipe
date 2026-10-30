@@ -79,7 +79,7 @@ fi
 
 # The workflows home the app made (~/ixpipe; HOME is the release's tmp when
 # Android sets none).
-home=$(as_app 'find "$PWD" -type d -name ixpipe -not -path "*/lib/*" 2>/dev/null' | tr -d '\r' | head -1)
+home=$(as_app "find /data/data/$PKG -type d -name ixpipe -not -path \"*/lib/*\" 2>/dev/null" | tr -d '\r' | head -1)
 echo "workflows home: ${home:-none}"
 if [[ -z $home ]]; then
   fail "the app made no workflows home"

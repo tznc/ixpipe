@@ -100,6 +100,10 @@ jobs:
           mix release ixpipe --overwrite
           cp _build/prod/android/ixpipe.apk "$RUNNER_TEMP/ixpipe.apk"
           unzip -l "$RUNNER_TEMP/ixpipe.apk" | grep -E '\.so$'
+          # What each shipped library links: Android must find all of it.
+          for so in deps/baguette/native/baguette_host/gen/android/app/src/main/jniLibs/x86_64/*.so; do
+            echo "$so:"; "$NDK_HOME"/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf -d "$so" | grep NEEDED || true
+          done
           rm -rf _build/prod/android/nifs/target
           df -h /
         timeout-minutes: 120
