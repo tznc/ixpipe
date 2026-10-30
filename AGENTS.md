@@ -25,7 +25,7 @@ desktop and mobile app in Elixir, rendered by GPUI through
 - Never create atoms from workflow input. Ports, ids and config keys stay strings.
 - Runic hashes steps by their fn plus bound variables, so build step fns inline (see `IxpipeCore.step/2`). A fn passed in as a variable gets the same hash for every node.
 - When recommending actions, give options A/B/C plus a recommendation. Ask when something is ambiguous.
-- No PRs unless asked. PR descriptions are 1-2 lines plus the session link.
+- Never push to `main`: every change lands through a PR from a `claude/` branch. PR descriptions are 1-2 lines plus the session link.
 
 ## Design language
 
