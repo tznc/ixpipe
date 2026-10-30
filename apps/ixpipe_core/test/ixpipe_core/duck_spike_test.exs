@@ -39,6 +39,11 @@ defmodule IxpipeCore.DuckSpikeTest do
     assert DF.to_rows(df) == [%{"a" => 1, "b" => "x", "c" => nil}]
   end
 
+  test "the engine is DuckDB v2" do
+    assert {:ok, df} = Duck.frame("SELECT version() AS v")
+    assert [%{"v" => "v2." <> _}] = DF.to_rows(df)
+  end
+
   test "errors are messages" do
     assert {:error, message} = Duck.frame("SELECT * FROM nope")
     assert message =~ "nope"
