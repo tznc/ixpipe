@@ -77,7 +77,7 @@ defmodule IxpipeApp.QA.OrganiseTest do
     contain_joined(page)
     :ok = Playwright.resize(page, 390, 844)
     assert :ok = Playwright.await(page, role: "tab", name: "Show properties")
-    Playwright.click(page, "Show properties")
+    Playwright.click(page, role: "tab", name: "Show properties")
     assert :ok = Playwright.await(page, role: "textbox", name: "Title")
 
     QA.capture(page, "organise-05-phone", [

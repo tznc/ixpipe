@@ -97,10 +97,15 @@ defmodule IxpipeApp.OrganiseViewTest do
   test "a collapsed container draws its wires to its edge", %{w: w} do
     Test.click(w, "Select sorted")
     Test.click(w, "Add container")
-    wires = length(lines(w))
+    assert [_, _] = lines(w)
     Test.click(w, "Collapse container_1")
-    # orders -> box and box -> top: the same two wires, ending at the box.
-    assert length(lines(w)) == wires
+    # orders -> box and box -> top: still two wires, ending at the box's edges.
+    assert [into, out_of] = lines(w)
+    box = attrs(w, "container_1")["class"]
+    [_, left] = Regex.run(~r/\bleft-\[(\d+)px\]/, box)
+    [_, width] = Regex.run(~r/\bw-\[(\d+)px\]/, box)
+    assert into["a"]["x2"] == left
+    assert out_of["a"]["x1"] == to_string(String.to_integer(left) + String.to_integer(width))
   end
 
   test "a disabled tool shows at 40% and is skipped with what follows", %{w: w, pid: pid} do

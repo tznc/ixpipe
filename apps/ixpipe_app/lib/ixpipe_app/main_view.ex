@@ -13,10 +13,6 @@ defmodule IxpipeApp.MainView do
 
   @node_width 200
   @port_y 24
-  # A card's height, estimated (cards grow with their content), for the
-  # boxes containers draw around their tools.
-  @card_height 150
-  @annotation_height 24
   # A container's padding around its tools, its title bar, and its size when
   # empty or collapsed.
   @box_pad 16
@@ -122,7 +118,7 @@ defmodule IxpipeApp.MainView do
         item: Edit.find(assigns.spec, assigns.selected),
         hidden: hidden(assigns.spec),
         off: off(assigns.spec),
-        boxes: boxes(assigns.spec),
+        boxes: boxes(assigns.spec, assigns.zoom, assigns.rows),
         phone: phone?(assigns)
       })
 
@@ -306,12 +302,14 @@ defmodule IxpipeApp.MainView do
   # With a tool selected, the new container holds it.
   def handle_event("add_container", _values, assigns) do
     held = for %Spec.Node{id: id} <- [Edit.find(assigns.spec, assigns.selected)], do: id
-    assigns = edit(assigns, &Edit.add_container(&1, free_spot(&1), held))
+    at = if held == [], do: open_space(assigns.spec, @box_empty), else: free_spot(assigns.spec)
+    assigns = edit(assigns, &Edit.add_container(&1, at, held))
     {:noreply, select(assigns, List.last(assigns.spec.containers).id)}
   end
 
   def handle_event("add_comment", _values, assigns) do
-    assigns = edit(assigns, &Edit.add_comment(&1, free_spot(&1)))
+    at = open_space(assigns.spec, {@comment_width, 80})
+    assigns = edit(assigns, &Edit.add_comment(&1, at))
     {:noreply, select(assigns, List.last(assigns.spec.comments).id)}
   end
 
@@ -618,6 +616,23 @@ defmodule IxpipeApp.MainView do
     %{"x" => 40 + 30 * n, "y" => 40 + 30 * n}
   end
 
+  # The first spot, top to bottom and left to right, where a `{width,
+  # height}` box clears everything on the canvas; else below it all.
+  defp open_space(spec, {w, h}) do
+    taken = extents(spec, 100, %{})
+    clear? = fn {x, y} -> Enum.all?(taken, &(not overlap?({x, y, w, h}, &1))) end
+    bottom = Enum.max(Enum.map(taken, &(elem(&1, 1) + elem(&1, 3))), fn -> 0 end)
+
+    case Enum.find(for(y <- 0..600//20, x <- 0..800//20, do: {x, y}), clear?) do
+      {x, y} -> %{"x" => x, "y" => y}
+      nil -> %{"x" => 40, "y" => bottom + 24}
+    end
+  end
+
+  # Two boxes closer than 12px count as overlapping.
+  defp overlap?({x1, y1, w1, h1}, {x2, y2, w2, h2}),
+    do: x1 < x2 + w2 + 12 and x2 < x1 + w1 + 12 and y1 < y2 + h2 + 12 and y2 < y1 + h1 + 12
+
   # Where a tool created in container `c` goes: inside an empty one, or to
   # the right of its tools.
   defp inside(spec, c) do
@@ -667,9 +682,10 @@ defmodule IxpipeApp.MainView do
   end
 
   # Each container with its box, `{x, y, width, height}` on the canvas.
-  defp boxes(spec), do: for(c <- spec.containers, do: {c, box(c, spec.nodes)})
+  defp boxes(spec, zoom, rows),
+    do: for(c <- spec.containers, do: {c, box(c, spec.nodes, &card_height(&1, zoom, rows))})
 
-  defp box(c, nodes) do
+  defp box(c, nodes, height) do
     %{"x" => x, "y" => y} = c.position
     {empty_w, empty_h} = @box_empty
 
@@ -682,13 +698,29 @@ defmodule IxpipeApp.MainView do
 
       held ->
         right = Enum.max(Enum.map(held, &(&1.position["x"] + @node_width))) + @box_pad
-        bottom = Enum.max(Enum.map(held, &(&1.position["y"] + card_height(&1)))) + @box_pad
+        bottom = Enum.max(Enum.map(held, &(&1.position["y"] + height.(&1)))) + @box_pad
         {x, y, right - x, bottom - y}
     end
   end
 
-  defp card_height(%{annotation: nil}), do: @card_height
-  defp card_height(_node), do: @card_height + @annotation_height
+  # A card's height on the canvas, estimated from what it shows (cards grow
+  # with their content, and their text does not scale with the zoom): the
+  # name and tool, the In and Out rows (two ports a line), output counts
+  # after a run, and its annotation.
+  defp card_height(node, zoom, rows) do
+    outs = Tools.outputs(node.tool)
+
+    ports =
+      cond do
+        compact?(zoom) -> 0
+        node.tool.inputs() == [] -> 37 * div(length(outs) + 1, 2)
+        true -> 37 + 37 * div(length(outs) + 1, 2)
+      end
+
+    counts = if multi?(node) and rows["#{node.id}.#{hd(outs)}"], do: 23 * length(outs), else: 0
+    note = if node.annotation, do: 24, else: 0
+    round((if(compact?(zoom), do: 70, else: 90) + ports + counts + note) * 100 / zoom)
+  end
 
   defp box_title(%{title: ""}), do: "Untitled container"
   defp box_title(%{title: title}), do: title
@@ -703,9 +735,10 @@ defmodule IxpipeApp.MainView do
   defp wires(spec, boxes) do
     folded = for {c, b} <- boxes, c.collapsed, id <- c.nodes, into: %{}, do: {id, {c.id, b}}
 
+    # (A match in a comprehension filters, so `from` and `to` come from a
+    # generator.)
     for {source, node, out_slot, in_slot} <- edges(spec),
-        from = folded[source.id],
-        to = folded[node.id],
+        {from, to} <- [{folded[source.id], folded[node.id]}],
         from == nil or to == nil or elem(from, 0) != elem(to, 0) do
       {x1, y1} =
         case from do
@@ -830,7 +863,7 @@ defmodule IxpipeApp.MainView do
   # current zoom and pan.
   defp surface(spec, zoom, {px, py}) do
     {w, h} =
-      Enum.reduce(extents(spec), {0, 0}, fn {x, y, width, height}, {w, h} ->
+      Enum.reduce(extents(spec, zoom, %{}), {0, 0}, fn {x, y, width, height}, {w, h} ->
         {max(w, x + px + width + 40), max(h, y + py + height + 10)}
       end)
 
@@ -838,14 +871,23 @@ defmodule IxpipeApp.MainView do
   end
 
   # Everything on the canvas as `{x, y, width, height}`.
-  defp extents(spec) do
-    for(%{position: %{"x" => x, "y" => y}} <- spec.nodes, do: {x, y, @node_width, 150}) ++
-      for({_c, box} <- boxes(spec), do: box) ++
-      for(%{position: %{"x" => x, "y" => y}} <- spec.comments, do: {x, y, @comment_width, 80})
+  defp extents(spec, zoom, rows) do
+    for(
+      %{position: %{"x" => x, "y" => y}} = node <- spec.nodes,
+      do: {x, y, @node_width, card_height(node, zoom, rows)}
+    ) ++
+      for({_c, box} <- boxes(spec, zoom, rows), do: box) ++
+      for(
+        %{position: %{"x" => x, "y" => y}} = c <- spec.comments,
+        do: {x, y, @comment_width, comment_height(c)}
+      )
   end
 
+  # About 28 characters a line under the comment's icon.
+  defp comment_height(c), do: 48 + 20 * max(div(String.length(c.text) + 27, 28), 1)
+
   defp min_position(spec) do
-    case extents(spec) do
+    case extents(spec, 100, %{}) do
       [] -> {0, 0}
       all -> {Enum.min(Enum.map(all, &elem(&1, 0))), Enum.min(Enum.map(all, &elem(&1, 1)))}
     end
@@ -1065,7 +1107,7 @@ defmodule IxpipeApp.MainView do
         <input name="annotation" value={@drafts["_annotation"] || @node.annotation || ""} phx-change="annotate"
           aria-label="Annotation" placeholder="Shown under the tool" class="w-full" />
         <div class="flex-row">
-          <.button size={@size} phx-click="summarise" icon="text" aria-label="Summarise settings">
+          <.button size={@size} phx-click="summarise" icon="scroll-text" aria-label="Summarise settings">
             Summarise settings
           </.button>
         </div>

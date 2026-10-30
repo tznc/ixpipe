@@ -9,6 +9,7 @@ desktop and mobile app in Elixir, rendered by GPUI through
 - `apps/ixpipe_core`: the engine, pure Elixir with no UI dependency.
   - `IxpipeCore.Spec` parses YAML workflows: `decode/1` (drafts), `validate/1` (runnable DAG), `to_yaml/1`.
   - `IxpipeCore.Edit` applies canvas edits (add, move, connect, remove) to drafts.
+  - Organisation (optional YAML keys, so older workflows load unchanged): `containers` (titled boxes holding tools; collapse, disable), `comments`, and per-tool `annotation` and `disabled`. A run skips disabled tools and everything downstream (`Spec.skipped/1`); skipped tools have no results.
   - `IxpipeCore.run/2` compiles a spec to a [Runic](https://hex.pm/packages/runic) workflow and runs it in a fresh in-memory DuckDB v2 database (`IxpipeCore.Duck`): Runic orchestrates the DAG, and each node's output is a table there (`IxpipeCore.Table`, named for the node: `id`, or `id.output`). Runic steps run concurrently, each on its own connection; past `memory_limit` DuckDB spills to disk.
   - Tools (`IxpipeCore.Tools.*`) implement `IxpipeCore.Tool` over tables: `inputs/0`, `fields/0` (the settings schema the properties panel renders; `IxpipeCore.Config` parses and formats each type) and `run/3` (`inputs, config, %IxpipeCore.Context{}`), mostly SQL through `Context.sql/3`. Expressions in Filter and Formula are DuckDB SQL. Register new ones in `IxpipeCore.Tools` and in a ribbon group (`@ribbon`) in `MainView`; a test checks every tool is on exactly one tab.
 - `apps/ixpipe_app`: the Baguette UI. `IxpipeApp.MainView` is the main window: home (workflows in `IXPIPE_HOME`, default `~/ixpipe`) and the canvas (ribbon, scrolling canvas with curved wires, properties panel driven by each tool's `fields/0`, results grid of the selected tool's first 50 rows after a run). `IxpipeApp.Theme` holds the colour tokens; every colour class must resolve to one (tested).
@@ -57,7 +58,8 @@ one-off style is a bug. `design_rules_test.exs` enforces what can be checked.
   title, one sentence, at most one action (tested on home and canvas).
 - **Ribbon** (`<.ribbon>`, `<.ribbon_group>`), as in ixtable after Access:
   a row of tabs over labelled command groups, under the canvas header.
-  Home holds Edit (Undo, Redo) and View (zoom); In/Out, Preparation, Join,
+  Home holds Edit (Undo, Redo), Organise (Container, Comment) and View
+  (zoom); In/Out, Preparation, Join,
   Parse and Transform hold the tools. Commands are `:quiet` small buttons with
   a lucide icon (`<.button icon="undo-2">`, ixtable's: Undo2, Redo2, ZoomIn,
   ZoomOut; each tool its own, an input and output sharing their format's)
