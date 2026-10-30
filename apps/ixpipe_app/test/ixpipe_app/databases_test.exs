@@ -145,4 +145,16 @@ defmodule IxpipeApp.DatabasesTest do
     Test.click(w, "Sheet Notes")
     assert hd(:sys.get_state(pid).assigns.spec.nodes).config["sheet"] == "Notes"
   end
+
+  test "the home screen doesn't list connections.yaml as a workflow", ctx do
+    :ok = Connections.put(ctx.dir, %{"name" => "shop", "type" => "sqlite", "path" => ctx.db})
+    w = ctx.w
+
+    start_supervised!(
+      {IxpipeApp.MainView, window: w, theme: IxpipeApp.Theme, args: [dir: ctx.dir]}
+    )
+
+    assert Test.text(w) =~ "flow.yaml"
+    refute Test.text(w) =~ "connections.yaml"
+  end
 end

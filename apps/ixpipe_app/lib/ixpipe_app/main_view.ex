@@ -431,6 +431,7 @@ defmodule IxpipeApp.MainView do
     files =
       for file <- assigns.dir |> File.ls!() |> Enum.sort(),
           String.ends_with?(file, ".yaml"),
+          file != "connections.yaml",
           do: {file, modified(Path.join(assigns.dir, file))}
 
     %{
