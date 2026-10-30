@@ -1,6 +1,6 @@
 defmodule IxpipeCore.RunTest do
   use ExUnit.Case, async: true
-  alias Explorer.DataFrame, as: DF
+  alias IxpipeCore.Table
 
   @fixtures Path.expand("../fixtures", __DIR__)
 
@@ -26,8 +26,8 @@ defmodule IxpipeCore.RunTest do
         - {id: out, tool: output_csv, inputs: {in: sorted}, config: {path: #{out}}}
       """)
 
-    assert DF.names(results["slim"]) == ["id", "amount"]
-    assert DF.to_columns(results["sorted"])["amount"] == [50, 30, 12, 5]
+    assert Table.columns(results["slim"]) == ["id", "amount"]
+    assert Table.to_columns(results["sorted"])["amount"] == [50, 30, 12, 5]
     assert File.read!(out) == "id,amount\n1,50\n3,30\n4,12\n2,5\n"
   end
 
@@ -44,7 +44,7 @@ defmodule IxpipeCore.RunTest do
         - {id: sorted, tool: sort, inputs: {in: joined}, config: {by: [id]}}
       """)
 
-    assert DF.to_columns(results["sorted"])["name"] == ["Ada", "Bob", "Ada", "Cy"]
+    assert Table.to_columns(results["sorted"])["name"] == ["Ada", "Bob", "Ada", "Cy"]
   end
 
   test "summarize groups and aggregates" do
@@ -63,7 +63,7 @@ defmodule IxpipeCore.RunTest do
         - {id: sorted, tool: sort, inputs: {in: totals}, config: {by: [customer_id]}}
       """)
 
-    cols = DF.to_columns(results["sorted"])
+    cols = Table.to_columns(results["sorted"])
     assert cols["total"] == [80, 5, 12]
     assert cols["orders"] == [2, 1, 1]
   end
@@ -77,8 +77,8 @@ defmodule IxpipeCore.RunTest do
         - {id: b, tool: sort, inputs: {in: orders}, config: {by: [amount]}}
       """)
 
-    assert DF.n_rows(results["a"]) == 4
-    assert DF.n_rows(results["b"]) == 4
+    assert Table.count(results["a"]) == 4
+    assert Table.count(results["b"]) == 4
   end
 
   test "a failing node fails the run with its id and reason" do
@@ -102,7 +102,7 @@ defmodule IxpipeCore.RunTest do
         - {id: both, tool: union, inputs: {a: x, b: y}}
       """)
 
-    assert DF.n_rows(results["both"]) == 8
+    assert Table.count(results["both"]) == 8
   end
 
   test "sample keeps the first or last n rows" do
@@ -114,8 +114,8 @@ defmodule IxpipeCore.RunTest do
         - {id: tail, tool: sample, inputs: {in: orders}, config: {n: 1, from: last}}
       """)
 
-    assert DF.to_columns(results["head"])["id"] == [1, 2]
-    assert DF.to_columns(results["tail"])["id"] == [4]
+    assert Table.to_columns(results["head"])["id"] == [1, 2]
+    assert Table.to_columns(results["tail"])["id"] == [4]
   end
 
   test "unique drops duplicate rows, or rows repeating the given columns" do
@@ -128,8 +128,8 @@ defmodule IxpipeCore.RunTest do
         - {id: customers, tool: unique, inputs: {in: orders}, config: {columns: [customer_id]}}
       """)
 
-    assert DF.n_rows(results["rows"]) == 4
-    assert DF.to_columns(results["customers"])["id"] == [1, 2, 4]
+    assert Table.count(results["rows"]) == 4
+    assert Table.to_columns(results["customers"])["id"] == [1, 2, 4]
   end
 
   test "a node can read the same input on two ports" do
@@ -140,6 +140,6 @@ defmodule IxpipeCore.RunTest do
         - {id: self, tool: join, inputs: {left: orders, right: orders}, config: {on: [id]}}
       """)
 
-    assert DF.n_rows(results["self.joined"]) == 4
+    assert Table.count(results["self.joined"]) == 4
   end
 end

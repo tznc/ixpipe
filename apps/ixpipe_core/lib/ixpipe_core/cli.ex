@@ -13,7 +13,6 @@ defmodule IxpipeCore.CLI do
   `bin/ixpipe-run`.
   """
 
-  alias Explorer.DataFrame
   alias IxpipeCore.{Spec, Tools}
 
   @usage """
@@ -108,10 +107,10 @@ defmodule IxpipeCore.CLI do
 
         case Tools.outputs(node.tool) do
           [_] ->
-            Map.put(base, "rows", DataFrame.n_rows(results[node.id]))
+            Map.put(base, "rows", IxpipeCore.Table.count(results[node.id]))
 
           outputs ->
-            counts = Map.new(outputs, &{&1, DataFrame.n_rows(results["#{node.id}.#{&1}"])})
+            counts = Map.new(outputs, &{&1, IxpipeCore.Table.count(results["#{node.id}.#{&1}"])})
 
             base
             |> Map.put("rows", nil)

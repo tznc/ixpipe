@@ -2,7 +2,7 @@ defmodule IxpipeCore.OutputsTest do
   # Tools with several outputs, as in Alteryx: Filter's True/False and
   # Join's J/L/R. A wire names its source as `node` or `node.output`.
   use ExUnit.Case, async: true
-  alias Explorer.DataFrame, as: DF
+  alias IxpipeCore.Table
   alias IxpipeCore.{Edit, Spec, Tools}
 
   @fixtures Path.expand("../fixtures", __DIR__)
@@ -13,7 +13,7 @@ defmodule IxpipeCore.OutputsTest do
     results
   end
 
-  defp ids(df), do: df |> DF.to_columns() |> Map.fetch!("id") |> Enum.sort()
+  defp ids(df), do: df |> Table.to_columns() |> Map.fetch!("id") |> Enum.sort()
 
   test "tools list their outputs; most have one" do
     assert Tools.outputs(Tools.Sort) == ["out"]
@@ -69,8 +69,8 @@ defmodule IxpipeCore.OutputsTest do
 
     assert ids(results["j.joined"]) == [1, 3]
     assert ids(results["j.left"]) == [2, 4]
-    assert DF.to_columns(results["j.right"])["name"] == ["Zed"]
-    assert DF.names(results["j.left"]) == ["id", "customer_id", "amount"]
+    assert Table.to_columns(results["j.right"])["name"] == ["Zed"]
+    assert Table.columns(results["j.left"]) == ["id", "customer_id", "amount"]
   end
 
   test "a wire to an output a tool does not have is an error" do

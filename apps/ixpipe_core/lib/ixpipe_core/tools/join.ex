@@ -61,8 +61,10 @@ defmodule IxpipeCore.Tools.Join do
 
     %{
       "joined" => Context.sql(ctx, "joined", joined),
-      "left" => Context.sql(ctx, "left", "SELECT * FROM #{l} ANTI JOIN #{r} USING (#{keys})"),
-      "right" => Context.sql(ctx, "right", "SELECT * FROM #{r} ANTI JOIN #{l} USING (#{keys})")
+      "left" =>
+        Context.sql(ctx, "left", "SELECT l.* FROM #{l} l ANTI JOIN #{r} r USING (#{keys})"),
+      "right" =>
+        Context.sql(ctx, "right", "SELECT r.* FROM #{r} r ANTI JOIN #{l} l USING (#{keys})")
     }
   end
 end
