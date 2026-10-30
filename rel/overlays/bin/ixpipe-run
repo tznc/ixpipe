@@ -1,0 +1,12 @@
+#!/bin/sh
+# Headless runs from a release, without opening the app's window:
+#
+#   bin/ixpipe-run run sales.yaml [--json] [--output-dir DIR]
+#   bin/ixpipe-run validate sales.yaml
+#
+# Only the engine starts. The release's `eval` passes the arguments after
+# the expression to System.argv().
+set -e
+exec "$(dirname "$0")/ixpipe" eval \
+  "{:ok, _} = Application.ensure_all_started(:ixpipe_core); System.halt(IxpipeCore.CLI.main(System.argv()))" \
+  "$@"
