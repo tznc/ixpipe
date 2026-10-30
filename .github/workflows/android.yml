@@ -128,7 +128,8 @@ jobs:
           api-level: 34
           arch: x86_64
           target: google_apis
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          # 800x1280 at density 1: the canvas header is wider than the default 320 px.
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -skin 800x1280
           disable-animations: true
           script: scripts/android-smoke.sh ${{ runner.temp }}/ixpipe.apk android-smoke
       - uses: actions/upload-artifact@v4

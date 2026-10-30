@@ -59,6 +59,12 @@ tap() {
     return 1
   fi
   echo "tap $1 at $at"
+  local width
+  width=$(adb shell wm size | tr -d '\r' | grep -Eo '[0-9]+x[0-9]+' | tail -1 | cut -dx -f1)
+  if ((${at% *} >= width)); then
+    fail "$1 is off screen (x ${at% *}, screen ${width} px wide)"
+    return 1
+  fi
   # shellcheck disable=SC2086
   adb shell input tap $at
 }
