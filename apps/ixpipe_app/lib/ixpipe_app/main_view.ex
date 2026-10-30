@@ -506,7 +506,7 @@ defmodule IxpipeApp.MainView do
 
             [{id, [first | _]} | _] ->
               n = warnings |> Map.values() |> Enum.map(&length/1) |> Enum.sum()
-              {:warning, "Run succeeded with #{plural(n, "warning")}", "#{id}: #{first} #{hint}"}
+              {:warning, "Run succeeded with #{plural(n, "warning")}", "#{id}: #{first}"}
           end
 
         # On a phone, a selected tool's rows show at once.

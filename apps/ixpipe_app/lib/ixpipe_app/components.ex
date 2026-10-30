@@ -187,7 +187,7 @@ defmodule IxpipeApp.Components do
     <div data-callout={@tone}
       class={"flex-row items-start gap-2 p-3 rounded-md border border-#{@colour} bg-#{@colour}/12 #{@class}"}>
       <div class={"size-2 mt-1 rounded-full bg-#{@colour}"} />
-      <div class="flex-col gap-1">
+      <div class="flex-col flex-1 min-w-0 gap-1">
         <text class="text-sm font-semibold text-foreground">{@title}</text>
         <text :if={@inner_block != []} class="text-sm text-foreground">{render_slot(@inner_block)}</text>
       </div>

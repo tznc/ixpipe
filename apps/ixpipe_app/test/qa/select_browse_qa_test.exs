@@ -28,7 +28,7 @@ defmodule IxpipeApp.QA.SelectBrowseTest do
 
   test "Select lists the input's columns", %{page: page} do
     add_select(page)
-    Playwright.click(page, "Keep customer_id")
+    Playwright.uncheck(page, "Keep customer_id")
     Playwright.fill(page, "Name of amount", "total")
     assert :ok = Playwright.await_text(page, "Renamed from amount")
 
