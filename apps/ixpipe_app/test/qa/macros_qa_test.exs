@@ -84,11 +84,11 @@ defmodule IxpipeApp.QA.MacrosTest do
       ])
 
       Playwright.click(page, "uses.yaml")
-      assert :ok = Playwright.await_text(page, "Macro · Big orders")
+      assert :ok = Playwright.await(page, role: "button", name: "Open macro")
     end
 
     test "the Macros tab", %{page: page} do
-      Playwright.click(page, "Macros tab")
+      Playwright.click(page, role: "tab", name: "Macros tab")
       assert :ok = Playwright.await_text(page, "Use a macro…")
 
       QA.capture(page, "macros-05-ribbon", [

@@ -38,4 +38,7 @@ defmodule IxpipeCore.Tools.Macro do
   @impl true
   def run(inputs, %{"_macro" => %Macro{} = macro} = config, ctx),
     do: Macro.run(macro, inputs, config, ctx)
+
+  def run(_inputs, _config, _ctx),
+    do: raise("its macro isn't loaded. Choose the macro file again.")
 end

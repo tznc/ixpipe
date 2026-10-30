@@ -287,6 +287,12 @@ defmodule IxpipeCore.MacroTest do
       assert Spec.format_error(reason) =~ "typo.yaml: f uses an unknown parameter treshold"
     end
 
+    test "a macro node whose macro was never loaded fails clearly" do
+      spec = %Spec{nodes: [%Spec.Node{id: "m", tool: Tools.Macro, config: %{"path" => "x.yaml"}}]}
+      assert {:error, {:node_failed, "m", message}} = IxpipeCore.run(spec)
+      assert message =~ "isn't loaded"
+    end
+
     test "a required parameter must be set", %{dir: dir} do
       write(dir, "req.yaml", """
       macro:
