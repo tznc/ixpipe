@@ -9,9 +9,13 @@ defmodule IxpipeCore.Table do
   import Duck, only: [ident: 1, literal: 1]
 
   @enforce_keys [:db, :name]
-  defstruct [:db, :name]
+  defstruct [:db, :name, warnings: []]
 
-  @type t :: %__MODULE__{db: Duck.db(), name: String.t()}
+  @typedoc """
+  `warnings` are what the tool that made the table wants a user to know,
+  without failing the run (Select's failed casts).
+  """
+  @type t :: %__MODULE__{db: Duck.db(), name: String.t(), warnings: [String.t()]}
 
   @doc "The table's name, quoted for SQL."
   @spec ref(t()) :: String.t()
@@ -55,6 +59,10 @@ defmodule IxpipeCore.Table do
   @spec columns(t()) :: [String.t()]
   def columns(table), do: Enum.map(describe(table), &elem(&1, 0))
 
+  @doc "`{column, type}` pairs, in column order."
+  @spec schema(t()) :: [{String.t(), String.t()}]
+  def schema(table), do: describe(table)
+
   @doc "DuckDB types by column name (`\"BIGINT\"`, `\"VARCHAR\"`, …)."
   @spec dtypes(t()) :: %{String.t() => String.t()}
   def dtypes(table), do: Map.new(describe(table))
@@ -90,6 +98,36 @@ defmodule IxpipeCore.Table do
       rows -> columns |> Enum.zip(Enum.zip_with(rows, & &1)) |> Map.new()
     end
   end
+
+  @doc """
+  `{columns, rows}` for one page of the table: `limit` rows (default 50)
+  from `offset`, in table order or by `sort: {column, :asc | :desc}`
+  (NULLs last either way).
+  """
+  @spec page(t(), keyword()) :: {[String.t()], [[term()]]}
+  def page(%__MODULE__{db: db} = table, opts \\ []) do
+    order =
+      case opts[:sort] do
+        {column, dir} when dir in [:asc, :desc] ->
+          " ORDER BY #{ident(column)} #{if dir == :asc, do: "ASC", else: "DESC"} NULLS LAST"
+
+        nil ->
+          ""
+      end
+
+    limit = Keyword.get(opts, :limit, 50)
+    offset = Keyword.get(opts, :offset, 0)
+
+    %{columns: columns, rows: rows} =
+      query!(
+        db,
+        "SELECT * FROM #{ref(table)}#{order} LIMIT #{int!(limit)} OFFSET #{int!(offset)}"
+      )
+
+    {columns, rows}
+  end
+
+  defp int!(n) when is_integer(n) and n >= 0, do: n
 
   defp select(%__MODULE__{db: db} = table, limit) do
     query!(db, "SELECT * FROM #{ref(table)}" <> if(limit, do: " LIMIT #{limit}", else: ""))

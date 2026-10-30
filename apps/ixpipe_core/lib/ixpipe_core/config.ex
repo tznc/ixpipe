@@ -13,13 +13,23 @@ defmodule IxpipeCore.Config do
   | `:integer` | `10` | an integer |
   | `:formulas` | one per line, `name = expression` | `[%{"as", "expr"}]` |
   | `:aggregates` | `sum(amount) as total, count(id) as orders` | `[%{"op", "column", "as"}]` |
+  | `:select` | not text: its own editor (`IxpipeCore.Tools.Select.edit/4`) | Select's columns |
 
   Empty text is `{:ok, nil}` (remove the setting) for an optional field and
   `{:error, "Required"}` otherwise.
   """
 
   @type type ::
-          :string | :path | :expr | :list | :bool | :choice | :integer | :formulas | :aggregates
+          :string
+          | :path
+          | :expr
+          | :list
+          | :bool
+          | :choice
+          | :integer
+          | :formulas
+          | :aggregates
+          | :select
 
   @spec format(IxpipeCore.Tool.field(), term()) :: String.t()
   def format(_field, nil), do: ""
