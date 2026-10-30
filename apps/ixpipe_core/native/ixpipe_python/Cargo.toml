@@ -1,0 +1,25 @@
+[package]
+name = "ixpipe_python"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "ixpipe_python"
+crate-type = ["cdylib"]
+
+[dependencies]
+rustler = "0.38"
+libc = "0.2"
+# RustPython, embedded and sandboxed: without the `host_env` feature the VM
+# has no filesystem, os, socket, subprocess or ctypes modules at all, and
+# without `stdio` its print goes where we point sys.stdout. The pure-Python
+# stdlib is frozen into the library (rustpython-pylib), so nothing is read
+# from disk at run time, Android included.
+rustpython-vm = { version = "0.6.0", default-features = false, features = ["compiler", "gc", "freeze-stdlib"] }
+rustpython-stdlib = { version = "0.6.0", default-features = false, features = ["compiler"] }
+rustpython-pylib = { version = "0.6.0", features = ["freeze-stdlib"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
+strip = true

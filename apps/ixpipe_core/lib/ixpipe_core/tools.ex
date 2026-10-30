@@ -24,7 +24,8 @@ defmodule IxpipeCore.Tools do
     "transpose" => IxpipeCore.Tools.Transpose,
     "text_to_columns" => IxpipeCore.Tools.TextToColumns,
     "regex" => IxpipeCore.Tools.Regex,
-    "data_cleansing" => IxpipeCore.Tools.DataCleansing
+    "data_cleansing" => IxpipeCore.Tools.DataCleansing,
+    "python" => IxpipeCore.Tools.Python
   }
 
   @spec lookup(term()) :: module() | nil
