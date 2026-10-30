@@ -7,7 +7,15 @@ defmodule IxpipeCore.Tools.InputParquet do
 
   @impl true
   def fields,
-    do: [%{key: "path", label: "File", type: :path, hint: "A Parquet file on this computer"}]
+    do: [
+      %{
+        key: "path",
+        label: "File",
+        type: :path,
+        accept: ["parquet"],
+        hint: "A Parquet file on this computer"
+      }
+    ]
 
   @impl true
   def run(_inputs, %{"path" => path}), do: Explorer.DataFrame.from_parquet!(path)

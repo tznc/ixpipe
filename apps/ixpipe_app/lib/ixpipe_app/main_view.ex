@@ -16,7 +16,8 @@ defmodule IxpipeApp.MainView do
   @port_y 24
   @toast_ms 6_000
   @preview_rows 50
-  @palette ~w(input_csv select filter formula sort join union summarize sample unique output_csv)
+  @palette ~w(input_csv input_excel input_parquet select filter formula sort join union
+              summarize sample unique output_csv output_excel output_parquet)
 
   def mount(args) do
     dir = Keyword.fetch!(args, :dir)
@@ -204,6 +205,9 @@ defmodule IxpipeApp.MainView do
 
   def handle_event("switch", %{"key" => key, "checked" => checked}, assigns),
     do: {:noreply, configure(assigns, key, to_string(checked), nil)}
+
+  def handle_event("picked", %{"key" => key, "path" => path}, assigns),
+    do: {:noreply, configure(assigns, key, path, path)}
 
   def handle_event("add_formula", _values, assigns),
     do: {:noreply, %{assigns | formula_rows: formula_rows(assigns) + 1}}
@@ -516,6 +520,31 @@ defmodule IxpipeApp.MainView do
     """
   end
 
+  defp field(%{field: %{type: :path}} = assigns) do
+    ~H"""
+    <div class="flex-col gap-1">
+      <.label>{@field.label}</.label>
+      <div class="flex-row items-center gap-2">
+        <div class="flex-1">
+          <input name={@field.key} value={@drafts[@field.key] || Config.format(@field, @node.config[@field.key])}
+            placeholder={@field[:hint]} aria-label={@field.label} class="w-full" />
+        </div>
+        <.button :if={!@field[:save]} size={:sm} phx-pick-file="picked" phx-value-key={@field.key}
+          accept={Enum.join(@field[:accept] || [], ",")} aria-label={"Choose #{String.downcase(@field.label)}"}>
+          Choose…
+        </.button>
+        <.button :if={@field[:save]} size={:sm} phx-pick-save="picked" phx-value-key={@field.key}
+          accept={Enum.join(@field[:accept] || [], ",")} default-name={"#{@node.id}.#{hd(@field[:accept] || ["csv"])}"}
+          aria-label={"Choose #{String.downcase(@field.label)}"}>
+          Choose…
+        </.button>
+      </div>
+      <.caption :if={@error} class="text-danger">{@error}</.caption>
+      <.caption :if={!@error && @field[:hint]}>{@field.hint}</.caption>
+    </div>
+    """
+  end
+
   defp field(assigns) do
     ~H"""
     <div class="flex-col gap-1">
@@ -566,7 +595,14 @@ defmodule IxpipeApp.MainView do
   defp plural(1, noun), do: "1 #{noun}"
   defp plural(n, noun), do: "#{n} #{noun}s"
 
-  @labels %{"input_csv" => "Input CSV", "output_csv" => "Output CSV"}
+  @labels %{
+    "input_csv" => "Input CSV",
+    "output_csv" => "Output CSV",
+    "input_excel" => "Input Excel",
+    "output_excel" => "Output Excel",
+    "input_parquet" => "Input Parquet",
+    "output_parquet" => "Output Parquet"
+  }
   defp tool_label(tool), do: Map.get_lazy(@labels, tool, fn -> String.capitalize(tool) end)
 
   defp palette, do: @palette

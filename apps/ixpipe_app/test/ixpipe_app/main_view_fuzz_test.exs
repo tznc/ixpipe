@@ -73,9 +73,16 @@ defmodule IxpipeApp.MainViewFuzzTest do
       ids = Enum.map(spec.nodes, & &1.id)
       assert ids == Enum.uniq(ids), "duplicate ids after #{inspect(trail)}"
 
-      for node <- spec.nodes,
-          {_port, from} <- node.inputs,
-          do: assert(from in ids, "dangling edge #{from} after #{inspect(trail)}")
+      # A wire reads `node` or `node.output`; the node must exist and, when
+      # named, so must the output.
+      for node <- spec.nodes, {_port, ref} <- node.inputs do
+        {from, output} = Spec.source(ref)
+        assert from in ids, "dangling edge #{ref} after #{inspect(trail)}"
+        source = Enum.find(spec.nodes, &(&1.id == from))
+
+        assert output in [nil | IxpipeCore.Tools.outputs(source.tool)],
+               "edge to a missing output #{ref} after #{inspect(trail)}"
+      end
 
       assert {:ok, ^spec} = spec |> Spec.to_yaml() |> Spec.decode(),
              "YAML does not round-trip after #{inspect(trail)}"

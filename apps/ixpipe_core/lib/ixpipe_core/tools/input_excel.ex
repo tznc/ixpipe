@@ -17,6 +17,7 @@ defmodule IxpipeCore.Tools.InputExcel do
     do: [
       %{
         key: "path",
+        accept: ["xlsx"],
         label: "File",
         type: :path,
         hint: "An Excel workbook (.xlsx) on this computer"

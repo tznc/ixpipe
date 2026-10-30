@@ -9,7 +9,9 @@ defmodule IxpipeCore.Tool do
   @typedoc """
   A setting, as an editor shows it: `key` in the node's config, a sentence-case
   `label`, a `type` (see `IxpipeCore.Config`), an optional `hint`, `options`
-  for a `:choice`, and `optional: true` when `run/2` can do without it.
+  for a `:choice`, and `optional: true` when `run/2` can do without it. A
+  `:path` may list the file extensions it `accept`s, and `save: true` when
+  the tool writes the file (an editor then offers a save dialog).
   """
   @type field :: %{
           required(:key) => String.t(),
@@ -17,7 +19,9 @@ defmodule IxpipeCore.Tool do
           required(:type) => IxpipeCore.Config.type(),
           optional(:hint) => String.t(),
           optional(:options) => [String.t()],
-          optional(:optional) => boolean()
+          optional(:optional) => boolean(),
+          optional(:accept) => [String.t()],
+          optional(:save) => boolean()
         }
 
   @callback inputs() :: [String.t()]

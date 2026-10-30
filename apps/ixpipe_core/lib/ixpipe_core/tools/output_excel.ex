@@ -14,7 +14,14 @@ defmodule IxpipeCore.Tools.OutputExcel do
   @impl true
   def fields,
     do: [
-      %{key: "path", label: "File", type: :path, hint: "Where to write the workbook (.xlsx)"},
+      %{
+        key: "path",
+        label: "File",
+        type: :path,
+        accept: ["xlsx"],
+        save: true,
+        hint: "Where to write the workbook (.xlsx)"
+      },
       %{key: "sheet", label: "Sheet", type: :string, optional: true, hint: "Default: Sheet1"}
     ]
 

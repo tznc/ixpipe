@@ -7,7 +7,16 @@ defmodule IxpipeCore.Tools.OutputParquet do
 
   @impl true
   def fields,
-    do: [%{key: "path", label: "File", type: :path, hint: "Where to write the Parquet file"}]
+    do: [
+      %{
+        key: "path",
+        label: "File",
+        type: :path,
+        accept: ["parquet"],
+        save: true,
+        hint: "Where to write the Parquet file"
+      }
+    ]
 
   @impl true
   def run(%{"in" => df}, %{"path" => path}) do

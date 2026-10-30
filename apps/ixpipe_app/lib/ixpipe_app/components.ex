@@ -66,7 +66,7 @@ defmodule IxpipeApp.Components do
   attr(:variant, :atom, default: :secondary, values: Map.keys(@variants))
   attr(:size, :atom, default: :md, values: [:sm, :md])
   attr(:class, :string, default: "")
-  attr(:rest, :global, include: ~w(type disabled))
+  attr(:rest, :global, include: ~w(type disabled accept default-name))
   slot(:inner_block, required: true)
 
   @doc """
