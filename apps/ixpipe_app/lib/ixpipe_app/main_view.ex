@@ -923,9 +923,7 @@ defmodule IxpipeApp.MainView do
 
     found =
       if assigns.mobile,
-        do:
-          {:error,
-           "Script runs on desktop only: phones can't start other programs. Use the Python tool, which runs anywhere."},
+        do: {:error, Script.desktop_only()},
         else: Script.runtime(language, assigns.node.config["interpreter"])
 
     assigns = Map.merge(assigns, %{found: found, language: Script.label(language)})

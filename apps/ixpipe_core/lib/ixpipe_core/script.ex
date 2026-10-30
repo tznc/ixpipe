@@ -63,6 +63,13 @@ defmodule IxpipeCore.Script do
   @spec supported?() :: boolean()
   def supported?, do: System.get_env("ANDROID_ROOT") == nil
 
+  @doc "Why Script can't run on a phone, and what to use instead."
+  @spec desktop_only() :: String.t()
+  def desktop_only,
+    do:
+      "Script runs on desktop only: phones can't start other programs. " <>
+        "Use the Python tool, which runs anywhere."
+
   @doc """
   The executable that runs `language`: `interpreter` (a path, or a name on
   PATH) when given, else the language's usual command. When there is none,
@@ -79,8 +86,7 @@ defmodule IxpipeCore.Script do
       {_, label, command, what} ->
         cond do
           not supported?() ->
-            {:error,
-             "Script runs on desktop only: phones can't start other programs. Use the Python tool, which runs anywhere."}
+            {:error, desktop_only()}
 
           interpreter in [nil, ""] ->
             case System.find_executable(command) do
