@@ -27,7 +27,9 @@ defmodule IxpipeApp.MixProject do
   defp deps do
     [
       {:ixpipe_core, in_umbrella: true},
-      {:baguette, github: "ziinc/baguette", ref: "070d821afcc2204bf494a44670d1f5aa18feba73"}
+      {:playwright_ex, "~> 0.15", only: :test},
+      {:websockex, "~> 0.4", only: :test},
+      {:baguette, github: "ziinc/baguette", ref: "4f0402a2ec69d25f5ff219394907b875eeac280a"}
     ]
   end
 end

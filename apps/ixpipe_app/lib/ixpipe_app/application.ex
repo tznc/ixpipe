@@ -1,20 +1,18 @@
 defmodule IxpipeApp.Application do
-  # See https://hexdocs.pm/elixir/Application.html
-  # for more information on OTP Applications
   @moduledoc false
 
   use Application
 
   @impl true
   def start(_type, _args) do
-    children = [
-      # Starts a worker by calling: IxpipeApp.Worker.start_link(arg)
-      # {IxpipeApp.Worker, arg}
-    ]
+    # Until there is an open-file screen, the main window shows the workflow
+    # at IXPIPE_WORKFLOW.
+    children =
+      case System.get_env("IXPIPE_WORKFLOW") do
+        nil -> []
+        path -> [{IxpipeApp.WorkflowView, window: 0, args: [path: path]}]
+      end
 
-    # See https://hexdocs.pm/elixir/Supervisor.html
-    # for other strategies and supported options
-    opts = [strategy: :one_for_one, name: IxpipeApp.Supervisor]
-    Supervisor.start_link(children, opts)
+    Supervisor.start_link(children, strategy: :one_for_one, name: IxpipeApp.Supervisor)
   end
 end

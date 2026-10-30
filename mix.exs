@@ -6,7 +6,14 @@ defmodule Ixpipe.MixProject do
       apps_path: "apps",
       version: "0.1.0",
       start_permanent: Mix.env() == :prod,
-      deps: deps()
+      deps: deps(),
+      releases: [
+        ixpipe: [
+          applications: [ixpipe_core: :permanent, ixpipe_app: :permanent],
+          steps: [:assemble, &Baguette.Release.package/1],
+          baguette: [window: [title: "ixpipe", width: 1200, height: 800]]
+        ]
+      ]
     ]
   end
 

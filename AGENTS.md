@@ -19,7 +19,7 @@ desktop and mobile app in Elixir, rendered by GPUI through
 - **All tests are Elixir (ExUnit).**
   - Engine: `apps/ixpipe_core/test`.
   - UI: headless `Baguette.Test` in `apps/ixpipe_app/test`.
-  - End-to-end UI: gpui-playwright (planned, driven from ExUnit).
+  - End-to-end UI: `Baguette.Playwright` (gpui-playwright) in `apps/ixpipe_app/test/e2e`, tagged `:playwright` and excluded by default.
 - Never create atoms from workflow input. Ports, ids and config keys stay strings.
 - Runic hashes steps by their fn plus bound variables, so build step fns inline (see `IxpipeCore.step/2`). A fn passed in as a variable gets the same hash for every node.
 - When recommending actions, give options A/B/C plus a recommendation. Ask when something is ambiguous.
@@ -36,4 +36,12 @@ desktop and mobile app in Elixir, rendered by GPUI through
 mix test                      # all apps
 mix test apps/ixpipe_core/test
 mix format --check-formatted
+
+# End-to-end: a release with the host's playwright feature, under a display.
+# Needs BAGUETTE_LIBERLANG (scripts/build-liberlang.sh in baguette) and that
+# OTP install's bin on PATH.
+BAGUETTE_HOST_FEATURES=playwright MIX_ENV=prod mix release ixpipe --overwrite
+xvfb-run -a mix test --only playwright
 ```
+
+The app shows the workflow at `IXPIPE_WORKFLOW` (until there is an open-file screen).
