@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+env:
+  OTP_TAG: OTP-29.1.2
+  OTP_VERSION: "29.1.2"
+  ELIXIR_VERSION: "1.20.4"
+  # baguette compiles its NIF with Rust; the e2e job also builds the host.
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: ${{ env.OTP_VERSION }}
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: mix-test-${{ runner.os }}-${{ env.OTP_VERSION }}-${{ hashFiles('mix.lock') }}
+      # The NIFs' Rust builds; libduckdb itself is downloaded prebuilt.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            apps/ixpipe_core/native/*/target
+            ~/.cargo/registry
+          key: nifs-${{ runner.os }}-${{ hashFiles('apps/ixpipe_core/native/*/Cargo.lock') }}
+      - run: mix deps.get
+      - run: mix format --check-formatted
+      - run: MIX_ENV=test mix compile --warnings-as-errors
+      - run: mix test
+
+  e2e:
+    # The ixpipe release with the host's `playwright` feature, driven from
+    # ExUnit through gpui-playwright under Xvfb. The host links liberlang
+    # built from the same OTP the release ships, so both share one ERTS.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: System dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libxdo-dev \
+            libssl-dev libxkbcommon-dev libxkbcommon-x11-dev libvulkan-dev mesa-vulkan-drivers \
+            libwayland-dev libx11-xcb-dev libfontconfig-dev libfreetype-dev libgbm-dev \
+            libegl-dev libxrandr-dev clang libncurses-dev fonts-dejavu xvfb
+      - uses: actions/cache@v4
+        id: liberlang
+        with:
+          path: |
+            ~/liberlang/liberlang.a
+            ~/liberlang/otp
+          key: liberlang-${{ runner.os }}-${{ env.OTP_TAG }}-${{ hashFiles('mix.lock') }}
+      # Runs mix to fetch baguette (and its build script); the release then
+      # uses the OTP built from source below.
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: ${{ env.OTP_VERSION }}
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+      - run: mix local.hex --force && mix local.rebar --force && mix deps.get
+      - name: Build liberlang and OTP (baguette's script)
+        if: steps.liberlang.outputs.cache-hit != 'true'
+        run: deps/baguette/scripts/build-liberlang.sh "$OTP_TAG" ~/liberlang && rm -rf ~/liberlang/src
+      - name: Use liberlang's OTP
+        run: |
+          echo "$HOME/liberlang/otp/bin" >> "$GITHUB_PATH"
+          echo "BAGUETTE_LIBERLANG=$HOME/liberlang" >> "$GITHUB_ENV"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            deps/baguette/native/target
+            apps/ixpipe_core/native/*/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-e2e-${{ runner.os }}-${{ hashFiles('mix.lock', 'apps/ixpipe_core/native/*/Cargo.lock') }}
+      - name: Release with gpui-playwright
+        run: BAGUETTE_HOST_FEATURES=playwright MIX_ENV=prod mix release ixpipe --overwrite
+        timeout-minutes: 40
+      - name: End-to-end tests
+        run: xvfb-run -a -s "-screen 0 1600x1000x24" mix test --only playwright
+        timeout-minutes: 10

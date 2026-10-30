@@ -1,0 +1,16 @@
+[package]
+name = "ixpipe_duckdb"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "ixpipe_duckdb"
+crate-type = ["cdylib"]
+
+[dependencies]
+rustler = "0.38"
+# DuckDB v2.0.0, prebuilt: desktop targets download DuckDB's official
+# libduckdb at build time (libduckdb-sys's download-lib); Android links the
+# one our CI publishes (DUCKDB_LIB_DIR). Nothing compiles DuckDB itself.
+# duckdb-rs encodes the DuckDB version as 1.MAJOR_MINOR_PATCH; ~ keeps it on v2.0.0.
+duckdb = { version = "~1.20000.1" }

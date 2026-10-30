@@ -1,0 +1,177 @@
+name: Android
+
+# ixpipe as an x86_64 APK, booted on an API 34 emulator and smoke-tested
+# (scripts/android-smoke.sh), and as an arm64-v8a APK for phones (built and
+# uploaded only: GitHub's runners cannot emulate arm64 at speed). Modelled
+# on baguette's android.yml.
+#
+# Release.android/1 (baguette) cross-builds every dependency NIF for the ABI:
+# ixpipe_duckdb and ixpipe_sqlite (rusqlite, bundled SQLite), kept in
+# _build/prod/android/nifs and cached by mix.lock and the crates' sources.
+# DuckDB itself is never compiled here: ixpipe_duckdb links the libduckdb.so
+# that libduckdb-android.yml builds once per DuckDB version and publishes as
+# a release, which mix.exs downloads (scripts/android-libduckdb.sh) and the
+# APK ships beside the NIF as lib/<abi>/libduckdb.so.
+#
+on:
+  push:
+    branches: [main, claude/core-engine-scaffold, claude/duckdb-engine]
+    paths:
+      - .github/workflows/android.yml
+      - scripts/android-*
+      - scripts/libduckdb-android.sha256
+      - mix.exs
+      - mix.lock
+      - apps/*/mix.exs
+      - apps/ixpipe_core/native/**
+  workflow_dispatch:
+
+env:
+  OTP_TAG: OTP-29.1.2
+  OTP_VERSION: "29.1.2"
+  ELIXIR_VERSION: "1.20.4"
+  NDK_VERSION: 27.2.12479018
+  CARGO_TERM_COLOR: always
+  LANG: C.UTF-8
+
+jobs:
+  apk:
+    name: APK (${{ matrix.abi }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - abi: x86_64
+            triple: x86_64-linux-android
+            jni: x86_64
+            emulator: true
+          - abi: arm64
+            triple: aarch64-linux-android
+            jni: arm64-v8a
+            emulator: false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      # The NDK, the Rust builds and the emulator need more than the runner's free disk.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android/sdk/ndk /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/share/swift
+          df -h /
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: ${{ env.OTP_VERSION }}
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.triple }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - name: Install NDK
+        run: |
+          sdkmanager --install "ndk;$NDK_VERSION"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+      # Fetches baguette, whose scripts build liberlang and drive the emulator.
+      - run: mix local.hex --force && mix local.rebar --force && mix deps.get
+      # Restore and save as separate steps, so a later failure keeps the builds.
+      - uses: actions/cache/restore@v4
+        id: liberlang
+        with:
+          path: ~/liberlang-android/${{ matrix.triple }}
+          key: liberlang-android-${{ matrix.abi }}-${{ env.OTP_TAG }}-${{ env.NDK_VERSION }}-${{ hashFiles('deps/baguette/scripts/build-liberlang-android.sh') }}
+      - name: Cross-build OTP for Android (baguette's script)
+        if: steps.liberlang.outputs.cache-hit != 'true'
+        run: |
+          deps/baguette/scripts/build-liberlang-android.sh "$OTP_TAG" ${{ matrix.abi }} ~/liberlang-build
+          mkdir -p ~/liberlang-android/${{ matrix.triple }}
+          cp ~/liberlang-build/{liberlang.so,erl_child_setup,inet_gethost} ~/liberlang-android/${{ matrix.triple }}/
+          rm -rf ~/liberlang-build
+      - uses: actions/cache/save@v4
+        if: steps.liberlang.outputs.cache-hit != 'true'
+        with:
+          path: ~/liberlang-android/${{ matrix.triple }}
+          key: ${{ steps.liberlang.outputs.cache-primary-key }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            deps/baguette/native/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-android-${{ matrix.abi }}-${{ hashFiles('mix.lock') }}
+      # The dependency NIFs built for Android, by app version. Bump the
+      # version when the names the NIFs ship under change, so a stale cache
+      # is not saved over.
+      - uses: actions/cache/restore@v4
+        id: nifs
+        with:
+          path: _build/prod/android/nifs/${{ matrix.triple }}
+          key: android-nifs-v3-${{ matrix.abi }}-${{ hashFiles('mix.lock', 'apps/ixpipe_core/native/**', 'scripts/libduckdb-android.sha256') }}
+      - name: Build the APK
+        env:
+          BAGUETTE_ANDROID: ${{ matrix.abi }}
+          MIX_ENV: prod
+        run: |
+          export BAGUETTE_LIBERLANG=$HOME/liberlang-android
+          mix release ixpipe --overwrite
+          apk=$RUNNER_TEMP/ixpipe-${{ matrix.abi }}.apk
+          cp _build/prod/android/ixpipe.apk "$apk"
+          unzip -l "$apk" | grep -E '\.so$'
+          ls -l "$apk"
+          # Each NIF ships under its library's own name, for this ABI only,
+          # and DuckDB's library beside them.
+          for lib in libixpipe_duckdb.so libixpipe_sqlite.so libduckdb.so; do
+            unzip -l "$apk" | grep -q "lib/${{ matrix.jni }}/$lib" || { echo "::error::no lib/${{ matrix.jni }}/$lib in the APK"; exit 1; }
+          done
+          if unzip -l "$apk" | grep -E 'liblib|unknown-linux-gnu'; then
+            echo "::error::a NIF ships under the build machine's file name"; exit 1
+          fi
+          # What each shipped library links: Android must find all of it.
+          for so in deps/baguette/native/baguette_host/gen/android/app/src/main/jniLibs/${{ matrix.jni }}/*.so; do
+            echo "$so:"; "$NDK_HOME"/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf -d "$so" | grep NEEDED || true
+            # A glibc library (the build machine's libduckdb) cannot load here.
+            if "$NDK_HOME"/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf -d "$so" | grep -E 'NEEDED.*(libc\.so\.6|libstdc\+\+\.so\.6)'; then
+              echo "::error::$so is a glibc build, not Android's"; exit 1
+            fi
+          done
+          rm -rf _build/prod/android/nifs/target
+          df -h /
+        timeout-minutes: 120
+      - uses: actions/cache/save@v4
+        if: always() && steps.nifs.outputs.cache-hit != 'true'
+        with:
+          path: _build/prod/android/nifs/${{ matrix.triple }}
+          key: ${{ steps.nifs.outputs.cache-primary-key }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ixpipe-${{ matrix.abi }}-apk
+          path: ${{ runner.temp }}/ixpipe-${{ matrix.abi }}.apk
+      - name: Enable KVM
+        if: matrix.emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Smoke test on the emulator
+        if: matrix.emulator
+        timeout-minutes: 25
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          # 800x1280 at density 1: the canvas header is wider than the default 320 px.
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -skin 800x1280
+          disable-animations: true
+          script: scripts/android-smoke.sh ${{ runner.temp }}/ixpipe-${{ matrix.abi }}.apk android-smoke
+      # Screenshots (home, canvas, run, scrolled, final) and logcat.
+      - uses: actions/upload-artifact@v4
+        if: always() && matrix.emulator
+        with:
+          name: android-smoke
+          path: android-smoke
