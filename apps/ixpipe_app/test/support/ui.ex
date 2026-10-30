@@ -26,6 +26,20 @@ defmodule IxpipeApp.UI do
         do: el
       )
 
+  @tool_tabs ["In/Out tab", "Preparation tab", "Join tab", "Transform tab"]
+
+  @doc "Adds `tool` from the ribbon tab that holds it, as a user would."
+  def add(window, tool) do
+    label = "Add #{tool}"
+
+    Enum.find(@tool_tabs, fn tab ->
+      Baguette.Test.click(window, tab)
+      find(window, label) != []
+    end) || raise "no ribbon tab holds #{tool}"
+
+    Baguette.Test.click(window, label)
+  end
+
   @doc "What a user can do in `window` now: `{:click, label}` and `{:drag, label}`."
   def actions(window) do
     for %{"a" => attrs} = el <- elements(Baguette.Test.tree(window)),

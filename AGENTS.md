@@ -10,8 +10,8 @@ desktop and mobile app in Elixir, rendered by GPUI through
   - `IxpipeCore.Spec` parses YAML workflows: `decode/1` (drafts), `validate/1` (runnable DAG), `to_yaml/1`.
   - `IxpipeCore.Edit` applies canvas edits (add, move, connect, remove) to drafts.
   - `IxpipeCore.run/1` compiles a spec to a [Runic](https://hex.pm/packages/runic) workflow and runs it.
-  - Tools (`IxpipeCore.Tools.*`) implement `IxpipeCore.Tool` over `Explorer.DataFrame`: `inputs/0`, `fields/0` (the settings schema the properties panel renders; `IxpipeCore.Config` parses and formats each type) and `run/2`. Register new ones in `IxpipeCore.Tools` and in the palette in `MainView`.
-- `apps/ixpipe_app`: the Baguette UI. `IxpipeApp.MainView` is the main window: home (workflows in `IXPIPE_HOME`, default `~/ixpipe`) and the canvas (tool palette, scrolling canvas with curved wires, properties panel driven by each tool's `fields/0`, results grid of the selected tool's first 50 rows after a run). `IxpipeApp.Theme` holds the colour tokens; every colour class must resolve to one (tested).
+  - Tools (`IxpipeCore.Tools.*`) implement `IxpipeCore.Tool` over `Explorer.DataFrame`: `inputs/0`, `fields/0` (the settings schema the properties panel renders; `IxpipeCore.Config` parses and formats each type) and `run/2`. Register new ones in `IxpipeCore.Tools` and in a ribbon group (`@ribbon`) in `MainView`; a test checks every tool is on exactly one tab.
+- `apps/ixpipe_app`: the Baguette UI. `IxpipeApp.MainView` is the main window: home (workflows in `IXPIPE_HOME`, default `~/ixpipe`) and the canvas (ribbon, scrolling canvas with curved wires, properties panel driven by each tool's `fields/0`, results grid of the selected tool's first 50 rows after a run). `IxpipeApp.Theme` holds the colour tokens; every colour class must resolve to one (tested).
   - Rust is only for platform NIFs.
 
 ## Rules
@@ -55,6 +55,12 @@ one-off style is a bug. `design_rules_test.exs` enforces what can be checked.
   top right that clears after 6 s; errors read "what happened. what to do."
 - **Empty states**: every list or canvas that can be empty has one: a
   title, one sentence, at most one action (tested on home and canvas).
+- **Ribbon** (`<.ribbon>`, `<.ribbon_group>`), as in ixtable after Access:
+  a row of tabs over labelled command groups, under the canvas header.
+  Home holds Edit (Undo, Redo) and View (zoom); In/Out, Preparation, Join
+  and Transform hold the tools. Commands are `:quiet` small buttons with
+  a short noun ("CSV" in the Input group); the group name is a caption
+  beneath. Save and Run stay in the header, always visible.
 - **Navigation**: drill-in uses `<.breadcrumb>` ("Workflows / sales.yaml"),
   not a Back button.
 - **Words**: sentence case; tool names humanized ("Input CSV"); counts with

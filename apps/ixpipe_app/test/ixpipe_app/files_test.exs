@@ -27,15 +27,15 @@ defmodule IxpipeApp.FilesTest do
     el["a"]
   end
 
-  test "Excel and Parquet tools are in the palette", %{w: w} do
-    text = Test.text(w)
+  test "Excel and Parquet tools are on the In/Out tab", %{w: w} do
+    Test.click(w, "In/Out tab")
 
-    for label <- ["Input Excel", "Output Excel", "Input Parquet", "Output Parquet"],
-        do: assert(text =~ label)
+    for tool <- ~w(input_excel output_excel input_parquet output_parquet),
+        do: assert(IxpipeApp.UI.find(w, "Add #{tool}") != [])
   end
 
   test "an input's File setting has a picker filtered to its format", %{w: w} do
-    Test.click(w, "Add input_excel")
+    IxpipeApp.UI.add(w, "input_excel")
     assert %{"phx-pick-file" => _, "accept" => "xlsx"} = picker(w, "Choose file")
 
     Test.pick_file(w, "Choose file", "/data/sales.xlsx")
@@ -44,7 +44,7 @@ defmodule IxpipeApp.FilesTest do
   end
 
   test "an output's File setting opens a save dialog", %{w: w, pid: pid} do
-    Test.click(w, "Add output_parquet")
+    IxpipeApp.UI.add(w, "output_parquet")
     assert %{"phx-pick-save" => _, "accept" => "parquet"} = picker(w, "Choose file")
 
     Test.pick_file(w, "Choose file", "/out/result.parquet")
@@ -53,7 +53,7 @@ defmodule IxpipeApp.FilesTest do
   end
 
   test "a switch with no setting shows the tool's default", %{w: w} do
-    Test.click(w, "Add input_excel")
+    IxpipeApp.UI.add(w, "input_excel")
 
     [checkbox] =
       for %{"t" => "input", "a" => %{"aria-label" => "First row is the header"} = a} <-

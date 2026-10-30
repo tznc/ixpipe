@@ -116,9 +116,20 @@ defmodule IxpipeApp.QA.CanvasTest do
       assert :ok = Playwright.await_text(page, "75%")
 
       QA.capture(page, "canvas-09-view", [
-        "A floating toolbar top right: Undo (dimmed, nothing left to undo), Redo, a divider, − 75% +, Restore view",
+        "Ribbon Home tab selected: Edit group (Undo dimmed, nothing left to undo; Redo) and View group (− 75% +, Restore view)",
         "All six cards (customers restored) compact (name and tool only), none overlapping, wires following them",
         "Nothing in the panels or header moved"
+      ])
+    end
+
+    test "the ribbon's tool tabs", %{page: page} do
+      Playwright.click(page, role: "tab", name: "In/Out tab")
+      assert :ok = Playwright.await(page, role: "button", name: "Add input_sqlite")
+
+      QA.capture(page, "canvas-10-ribbon", [
+        "Ribbon under the header: tabs Home, In/Out (selected: teal tint), Preparation, Join, Transform",
+        "Groups Input (CSV, Excel, Parquet, SQLite, Postgres) and Output (CSV, Excel, Parquet, SQLite), each named in a caption beneath, a rule between",
+        "No tools sidebar: the canvas starts at the left edge"
       ])
     end
   end
@@ -164,6 +175,7 @@ defmodule IxpipeApp.QA.CanvasTest do
     end
 
     test "an Excel input chosen with the file picker", %{page: page, book: book} do
+      Playwright.click(page, role: "tab", name: "In/Out tab")
       Playwright.click(page, "Add input_excel")
       Playwright.click(page, "Choose file")
       assert Playwright.input_value(page, "File") == book
@@ -174,7 +186,7 @@ defmodule IxpipeApp.QA.CanvasTest do
       QA.capture(page, "canvas-08-excel", [
         "One Input Excel card; the panel shows File (with the workbook's path and a Choose… button), Sheet, and the header switch",
         "Results lists region and sales: North 120, South 80, East 95, sales right-aligned",
-        "The palette lists Input Excel, Input Parquet, Output Excel and Output Parquet"
+        "The In/Out tab is selected; its Input and Output groups list Excel and Parquet"
       ])
     end
   end

@@ -38,7 +38,7 @@ defmodule IxpipeApp.OutputsViewTest do
   end
 
   test "wiring from a named output", %{w: w, dir: dir} do
-    Test.click(w, "Add sort")
+    IxpipeApp.UI.add(w, "sort")
     Test.click(w, "Connect from big false")
     Test.click(w, "Connect to sort_1 in")
     Test.click(w, "Save workflow")

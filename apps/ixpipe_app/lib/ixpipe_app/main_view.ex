@@ -18,9 +18,20 @@ defmodule IxpipeApp.MainView do
   @zooms [50, 75, 100, 125, 150]
   @history 100
   @preview_rows 50
-  @palette ~w(input_csv input_excel input_parquet input_sqlite input_postgres select filter
-              formula sort join union summarize sample unique output_csv output_excel
-              output_parquet output_sqlite)
+  # The ribbon's tabs: Home edits and views the workflow; the rest hold the
+  # tools, by category, in labelled groups.
+  @ribbon [
+    {"home", "Home", []},
+    {"inout", "In/Out",
+     [
+       {"Input", ~w(input_csv input_excel input_parquet input_sqlite input_postgres)},
+       {"Output", ~w(output_csv output_excel output_parquet output_sqlite)}
+     ]},
+    {"prepare", "Preparation",
+     [{"Columns", ~w(select formula)}, {"Rows", ~w(filter sort sample unique)}]},
+    {"join", "Join", [{"Combine", ~w(join union)}]},
+    {"transform", "Transform", [{"Aggregate", ~w(summarize)}]}
+  ]
 
   def mount(args) do
     dir = Keyword.fetch!(args, :dir)
@@ -46,7 +57,8 @@ defmodule IxpipeApp.MainView do
       future: [],
       last_step: nil,
       zoom: 100,
-      pan: {0, 0}
+      pan: {0, 0},
+      tab: "home"
     }
 
     case args[:path] do
@@ -94,17 +106,32 @@ defmodule IxpipeApp.MainView do
         </div>
       </div>
       <div class="h-px w-full bg-border" />
+      <.ribbon tabs={ribbon_tabs()} selected={@tab}>
+        <%= if @tab == "home" do %>
+          <.ribbon_group label="Edit">
+            <.button size={:sm} variant={:quiet} phx-click="undo" disabled={@past == []} aria-label="Undo">Undo</.button>
+            <.button size={:sm} variant={:quiet} phx-click="redo" disabled={@future == []} aria-label="Redo">Redo</.button>
+          </.ribbon_group>
+          <.ribbon_group label="View">
+            <.button size={:sm} variant={:quiet} phx-click="zoom" phx-value-by="-1"
+              disabled={@zoom == hd(zooms())} aria-label="Zoom out">−</.button>
+            <.caption class="w-[40px] text-center">{@zoom}%</.caption>
+            <.button size={:sm} variant={:quiet} phx-click="zoom" phx-value-by="1"
+              disabled={@zoom == List.last(zooms())} aria-label="Zoom in">+</.button>
+            <.button size={:sm} variant={:quiet} phx-click="reset_view" aria-label="Restore view">Restore view</.button>
+          </.ribbon_group>
+        <% else %>
+          <.ribbon_group :for={{group, tools} <- ribbon_groups(@tab)} label={group}>
+            <.button :for={tool <- tools} size={:sm} variant={:quiet} phx-click="add" phx-value-tool={tool}
+              aria-label={"Add #{tool}"}>{command_label(group, tool)}</.button>
+          </.ribbon_group>
+        <% end %>
+      </.ribbon>
       <div class="flex-row flex-1">
-        <nav class="flex-col gap-1 p-3 w-[180px] bg-sidebar" aria-label="Tools">
-          <.label class="px-3 pb-1">Tools</.label>
-          <.button :for={tool <- palette()} variant={:quiet} phx-click="add" phx-value-tool={tool}
-            aria-label={"Add #{tool}"}>{tool_label(tool)}</.button>
-        </nav>
-        <div class="w-px h-full bg-border" />
         <div class="flex-col flex-1">
         <div class="relative flex-1 overflow-hidden bg-canvas">
           <.empty_state :if={@spec.nodes == []} title="This workflow is empty">
-            Add a tool from the list on the left.
+            Add a tool from a ribbon tab above.
           </.empty_state>
           <%!-- The surface is as large as the furthest node, so the canvas
             scrolls to every one. --%>
@@ -149,19 +176,6 @@ defmodule IxpipeApp.MainView do
             </div>
           </div>
           </div>
-          </div>
-          <%!-- The view's tools float over the canvas, top right. --%>
-          <div class="absolute right-[16px] top-[16px] flex-row items-center gap-1 p-1 rounded-md bg-background shadow-md"
-            aria-label="View">
-            <.button size={:sm} variant={:quiet} phx-click="undo" disabled={@past == []} aria-label="Undo">Undo</.button>
-            <.button size={:sm} variant={:quiet} phx-click="redo" disabled={@future == []} aria-label="Redo">Redo</.button>
-            <div class="w-px h-[16px] bg-border" />
-            <.button size={:sm} variant={:quiet} phx-click="zoom" phx-value-by="-1"
-              disabled={@zoom == hd(zooms())} aria-label="Zoom out">−</.button>
-            <.caption class="w-[40px] text-center">{@zoom}%</.caption>
-            <.button size={:sm} variant={:quiet} phx-click="zoom" phx-value-by="1"
-              disabled={@zoom == List.last(zooms())} aria-label="Zoom in">+</.button>
-            <.button size={:sm} variant={:quiet} phx-click="reset_view" aria-label="Restore view">Restore view</.button>
           </div>
           <%!-- Over the canvas, so status never moves the layout; the opaque
             backing keeps the callout's tint from showing the canvas through. --%>
@@ -256,6 +270,10 @@ defmodule IxpipeApp.MainView do
     x = max(px + round(dx * 100 / zoom), -min_x)
     y = max(py + round(dy * 100 / zoom), -min_y)
     {:noreply, %{assigns | pan: {x, y}}}
+  end
+
+  def handle_event("ribbon", %{"tab" => tab}, assigns) do
+    {:noreply, %{assigns | tab: tab}}
   end
 
   def handle_event("zoom", %{"by" => by}, assigns) do
@@ -764,7 +782,15 @@ defmodule IxpipeApp.MainView do
   }
   defp tool_label(tool), do: Map.get_lazy(@labels, tool, fn -> String.capitalize(tool) end)
 
-  defp palette, do: @palette
+  defp ribbon_tabs, do: for({key, label, _} <- @ribbon, do: {key, label})
+
+  defp ribbon_groups(tab),
+    do: Enum.find_value(@ribbon, [], fn {key, _, groups} -> key == tab && groups end)
+
+  # In the Input and Output groups the group names the direction: "CSV".
+  defp command_label(group, tool),
+    do: tool |> tool_label() |> String.replace_prefix(group <> " ", "")
+
   defp node_width, do: @node_width
   defp port_y, do: @port_y
 end

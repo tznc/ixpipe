@@ -88,6 +88,54 @@ defmodule IxpipeApp.Components do
   defp size(:sm), do: "px-2 py-1 text-xs font-medium"
   defp size(:md), do: "px-3 py-1 text-sm font-medium"
 
+  ## Ribbon
+
+  attr(:tabs, :list, required: true, doc: "`{key, label}` pairs")
+  attr(:selected, :string, required: true)
+  attr(:event, :string, default: "ribbon")
+  slot(:inner_block, required: true)
+
+  @doc """
+  The ribbon (as in ixtable, after Access): a row of tabs over the selected
+  tab's labelled command groups (`ribbon_group/1`). Tabs are labelled
+  "<Label> tab" and send `event` with `phx-value-tab`.
+  """
+  def ribbon(assigns) do
+    ~H"""
+    <div class="flex-col w-full bg-sidebar" aria-label="Ribbon">
+      <div class="flex-row items-center gap-1 px-2 pt-1" role="tablist">
+        <button :for={{key, label} <- @tabs} data-variant="tab" role="tab" aria-selected={to_string(key == @selected)}
+          aria-label={"#{label} tab"} phx-click={@event} phx-value-tab={key}
+          class={"px-2 py-1 rounded-md cursor-pointer text-xs " <> tab_look(key == @selected)}>{label}</button>
+      </div>
+      <div class="flex-row items-stretch px-2 py-1 overflow-x-auto">{render_slot(@inner_block)}</div>
+      <div class="h-px w-full bg-border" />
+    </div>
+    """
+  end
+
+  defp tab_look(true), do: "font-semibold text-link bg-primary/12"
+  defp tab_look(false), do: "font-medium text-muted-foreground hover:bg-muted"
+
+  attr(:label, :string, required: true)
+  slot(:inner_block, required: true)
+
+  @doc """
+  One labelled group of ribbon commands (quiet small buttons), its name a
+  caption beneath them and a rule after it.
+  """
+  def ribbon_group(assigns) do
+    ~H"""
+    <div class="flex-row items-stretch">
+      <div class="flex-col justify-between gap-1 px-2" role="group" aria-label={@label}>
+        <div class="flex-row items-center gap-1">{render_slot(@inner_block)}</div>
+        <.caption class="w-full text-center">{@label}</.caption>
+      </div>
+      <div class="w-px bg-border" />
+    </div>
+    """
+  end
+
   ## Status
 
   attr(:tone, :atom, required: true, values: [:info, :success, :warning, :danger])

@@ -45,7 +45,8 @@ defmodule IxpipeApp.HistoryViewTest do
   end
 
   test "undo and redo an added tool", %{w: w, pid: pid} do
-    Test.click(w, "Add sample")
+    IxpipeApp.UI.add(w, "sample")
+    Test.click(w, "Home tab")
     assert node(pid, "sample_1")
     Test.click(w, "Undo")
     refute node(pid, "sample_1")
@@ -63,7 +64,8 @@ defmodule IxpipeApp.HistoryViewTest do
 
   test "undo a move and a new wire", %{w: w, pid: pid} do
     Test.drag(w, "sorted", 40, 0)
-    Test.click(w, "Add sort")
+    IxpipeApp.UI.add(w, "sort")
+    Test.click(w, "Home tab")
     Test.click(w, "Connect from sorted")
     Test.click(w, "Connect to sort_1 in")
     Test.click(w, "Undo")
@@ -82,9 +84,11 @@ defmodule IxpipeApp.HistoryViewTest do
   end
 
   test "a new edit after undo clears redo", %{w: w} do
-    Test.click(w, "Add sample")
+    IxpipeApp.UI.add(w, "sample")
+    Test.click(w, "Home tab")
     Test.click(w, "Undo")
-    Test.click(w, "Add unique")
+    IxpipeApp.UI.add(w, "unique")
+    Test.click(w, "Home tab")
     assert Map.has_key?(attrs(w, "Redo"), "disabled")
   end
 

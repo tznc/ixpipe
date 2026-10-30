@@ -37,15 +37,17 @@ defmodule IxpipeApp.DatabasesTest do
     {w, pid}
   end
 
-  test "database tools are in the palette", ctx do
+  test "database tools are on the In/Out tab", ctx do
     {w, _} = start(ctx)
-    text = Test.text(w)
-    for label <- ["Input SQLite", "Input Postgres", "Output SQLite"], do: assert(text =~ label)
+    Test.click(w, "In/Out tab")
+
+    for tool <- ~w(input_sqlite input_postgres output_sqlite),
+        do: assert(IxpipeApp.UI.find(w, "Add #{tool}") != [])
   end
 
   test "without saved connections, the Connection setting says where to add them", ctx do
     {w, _} = start(ctx)
-    Test.click(w, "Add input_postgres")
+    IxpipeApp.UI.add(w, "input_postgres")
     assert Test.text(w) =~ "No saved connections yet"
     assert Test.text(w) =~ "connections.yaml"
   end
@@ -64,7 +66,7 @@ defmodule IxpipeApp.DatabasesTest do
       })
 
     {w, pid} = start(ctx)
-    Test.click(w, "Add input_sqlite")
+    IxpipeApp.UI.add(w, "input_sqlite")
     assert Test.find_all(w, "Connection shop") != []
     assert Test.find_all(w, "Connection warehouse") == []
 
@@ -76,7 +78,7 @@ defmodule IxpipeApp.DatabasesTest do
     :ok = Connections.put(ctx.dir, %{"name" => "shop", "type" => "sqlite", "path" => ctx.db})
     {w, pid} = start(ctx)
 
-    Test.click(w, "Add input_sqlite")
+    IxpipeApp.UI.add(w, "input_sqlite")
     Test.click(w, "Connection shop")
     Test.fill(w, "Table", "orders")
     Test.click(w, "Run workflow")

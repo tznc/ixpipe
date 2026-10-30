@@ -38,7 +38,7 @@ defmodule IxpipeApp.DesignRulesTest do
     home = frame(w)
     Test.click(w, "Open sales.yaml")
     canvas = frame(w)
-    Test.click(w, "Add sort")
+    IxpipeApp.UI.add(w, "sort")
     Test.click(w, "Connect from orders")
     connecting = frame(w)
     Test.click(w, "Connect to sort_1 in")
@@ -107,7 +107,7 @@ defmodule IxpipeApp.DesignRulesTest do
     w = start(ctx)
     assert Test.text(w) =~ "No workflows yet"
     Test.click(w, "New workflow")
-    assert Test.text(w) =~ "Add a tool from the list on the left"
+    assert Test.text(w) =~ "Add a tool from a ribbon tab above"
   end
 
   test "colours resolve to theme tokens on every screen", ctx do

@@ -59,7 +59,7 @@ defmodule IxpipeApp.MainViewTest do
   test "build, wire, move and save a workflow", ctx do
     w = start(ctx, path: Path.join(ctx.dir, "sales.yaml"))
 
-    Test.click(w, "Add sort")
+    IxpipeApp.UI.add(w, "sort")
     assert Test.text(w) =~ "sort_1"
 
     Test.click(w, "Connect from orders")
@@ -75,7 +75,7 @@ defmodule IxpipeApp.MainViewTest do
 
   test "remove deletes a node and its edges", ctx do
     w = start(ctx, path: Path.join(ctx.dir, "sales.yaml"))
-    Test.click(w, "Add sort")
+    IxpipeApp.UI.add(w, "sort")
     Test.click(w, "Connect from orders")
     Test.click(w, "Connect to sort_1 in")
 
@@ -94,7 +94,7 @@ defmodule IxpipeApp.MainViewTest do
 
   test "Run reports an incomplete workflow instead of running it", ctx do
     w = start(ctx, path: Path.join(ctx.dir, "sales.yaml"))
-    Test.click(w, "Add sort")
+    IxpipeApp.UI.add(w, "sort")
     Test.click(w, "Run workflow")
     assert Test.text(w) =~ "sort_1: expects inputs [in], got []"
   end
@@ -121,7 +121,7 @@ defmodule IxpipeApp.MainViewTest do
     w = start(ctx)
     assert IxpipeApp.UI.unresolved_colours(w) == []
     Test.click(w, "Open sales.yaml")
-    Test.click(w, "Add sort")
+    IxpipeApp.UI.add(w, "sort")
     Test.click(w, "Connect from orders")
     Test.click(w, "Connect to sort_1 in")
     assert IxpipeApp.UI.unresolved_colours(w) == []
@@ -129,7 +129,7 @@ defmodule IxpipeApp.MainViewTest do
 
   test "the canvas scrolls to every node: its surface covers the furthest one", ctx do
     w = start(ctx, path: Path.join(ctx.dir, "sales.yaml"))
-    Test.click(w, "Add sort")
+    IxpipeApp.UI.add(w, "sort")
     Test.drag(w, "sort_1", 900, 700)
 
     [surface] = IxpipeApp.UI.find(w, "Canvas surface")

@@ -47,14 +47,14 @@ defmodule IxpipeApp.PropertiesTest do
   end
 
   test "a new tool is selected, and editing a setting changes the workflow", %{w: w, dir: dir} do
-    Test.click(w, "Add sort")
+    IxpipeApp.UI.add(w, "sort")
     Test.fill(w, "Sort by", "amount, id")
     Test.click(w, "Save workflow")
     assert saved(dir)["sort_1"].config == %{"by" => ["amount", "id"]}
   end
 
   test "an invalid value shows why and leaves the workflow as it was", %{w: w, dir: dir} do
-    Test.click(w, "Add sample")
+    IxpipeApp.UI.add(w, "sample")
     Test.fill(w, "Rows", "abc")
     assert Test.text(w) =~ "Enter a whole number"
     assert Test.value(w, "Rows") == "abc"
@@ -67,9 +67,9 @@ defmodule IxpipeApp.PropertiesTest do
   end
 
   test "choices and switches", %{w: w, dir: dir} do
-    Test.click(w, "Add join")
+    IxpipeApp.UI.add(w, "join")
     Test.click(w, "Join type left")
-    Test.click(w, "Add sort")
+    IxpipeApp.UI.add(w, "sort")
     Test.click(w, "Descending")
     Test.click(w, "Save workflow")
     assert saved(dir)["join_1"].config == %{"how" => "left"}
@@ -77,7 +77,7 @@ defmodule IxpipeApp.PropertiesTest do
   end
 
   test "formulas: one row each, and Add formula adds a row", %{w: w, dir: dir} do
-    Test.click(w, "Add formula")
+    IxpipeApp.UI.add(w, "formula")
     Test.fill(w, "Formula 1", "taxed = amount * 2")
     Test.click(w, "Add a formula")
     Test.fill(w, "Formula 2", "big = taxed > 50")
