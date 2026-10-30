@@ -40,7 +40,9 @@ fail() {
 wait_for() {
   local deadline=$((SECONDS + $2)) from=${3:-0}
   while ((SECONDS < deadline)); do
-    if tail -n +$((from + 1)) "$OUT/logcat.txt" | grep -Eq "$1"; then return 0; fi
+    # Not `tail | grep -q`: grep exits on the first match, tail dies of
+    # SIGPIPE, and pipefail turns the match into a failure.
+    if grep -Eq "$1" < <(tail -n +$((from + 1)) "$OUT/logcat.txt"); then return 0; fi
     sleep 1
   done
   fail "no logcat line matching /$1/ within $2 s"
