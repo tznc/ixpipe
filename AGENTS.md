@@ -9,16 +9,16 @@ desktop and mobile app in Elixir, rendered by GPUI through
 - `apps/ixpipe_core`: the engine, pure Elixir with no UI dependency.
   - `IxpipeCore.Spec` parses YAML workflows: `decode/1` (drafts), `validate/1` (runnable DAG), `to_yaml/1`.
   - `IxpipeCore.Edit` applies canvas edits (add, move, connect, remove) to drafts.
-  - `IxpipeCore.run/1` compiles a spec to a [Runic](https://hex.pm/packages/runic) workflow and runs it.
-  - Tools (`IxpipeCore.Tools.*`) implement `IxpipeCore.Tool` over `Explorer.DataFrame`: `inputs/0`, `fields/0` (the settings schema the properties panel renders; `IxpipeCore.Config` parses and formats each type) and `run/2`. Register new ones in `IxpipeCore.Tools` and in a ribbon group (`@ribbon`) in `MainView`; a test checks every tool is on exactly one tab.
+  - `IxpipeCore.run/2` compiles a spec to a [Runic](https://hex.pm/packages/runic) workflow and runs it in a fresh in-memory DuckDB v2 database (`IxpipeCore.Duck`): Runic orchestrates the DAG, and each node's output is a table there (`IxpipeCore.Table`, named for the node: `id`, or `id.output`). Runic steps run concurrently, each on its own connection; past `memory_limit` DuckDB spills to disk.
+  - Tools (`IxpipeCore.Tools.*`) implement `IxpipeCore.Tool` over tables: `inputs/0`, `fields/0` (the settings schema the properties panel renders; `IxpipeCore.Config` parses and formats each type) and `run/3` (`inputs, config, %IxpipeCore.Context{}`), mostly SQL through `Context.sql/3`. Expressions in Filter and Formula are DuckDB SQL. Register new ones in `IxpipeCore.Tools` and in a ribbon group (`@ribbon`) in `MainView`; a test checks every tool is on exactly one tab.
 - `apps/ixpipe_app`: the Baguette UI. `IxpipeApp.MainView` is the main window: home (workflows in `IXPIPE_HOME`, default `~/ixpipe`) and the canvas (ribbon, scrolling canvas with curved wires, properties panel driven by each tool's `fields/0`, results grid of the selected tool's first 50 rows after a run). `IxpipeApp.Theme` holds the colour tokens; every colour class must resolve to one (tested).
-  - Rust is only for NIFs: platform glue, and `IxpipeCore.Sqlite` (`apps/ixpipe_core/native/ixpipe_sqlite`, rusqlite with SQLite bundled so it builds from source on every target, Android included).
+  - Rust is only for NIFs: platform glue, `IxpipeCore.Duck` (`apps/ixpipe_core/native/ixpipe_duckdb`, duckdb-rs `~1.20000` = DuckDB v2.0.0, bundled with parquet and json) and `IxpipeCore.Sqlite` (`native/ixpipe_sqlite`, rusqlite bundled). Both build from source on every target, Android included; DuckDB takes ~25 minutes from scratch, so CI caches `native/*/target`.
 
 ## Rules
 
 - **TDD for every feature and fix**: write the failing test first, see it fail, then implement. Styling-only changes are exempt.
 - **All tests are Elixir (ExUnit).**
-  - Engine: `apps/ixpipe_core/test`.
+  - Engine: `apps/ixpipe_core/test`. Test a tool on its own with `ctx = IxpipeCore.Context.new()`, inputs from `Table.new(ctx.db, "src", col: [...])`, and assertions on `Table.to_columns/1`.
   - UI: headless `Baguette.Test` in `apps/ixpipe_app/test`.
   - End-to-end UI: `Baguette.Playwright` (gpui-playwright) in `apps/ixpipe_app/test/e2e`, tagged `:playwright` and excluded by default.
   - QA: screenshot QA (`:qa`) and a seeded chaos monkey (`:chaos`) in `apps/ixpipe_app/test/qa`; headless fuzzing in `main_view_fuzz_test.exs`. See `.claude/skills/app-qa/SKILL.md`; run it after UI changes, before reporting done.
