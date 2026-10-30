@@ -115,4 +115,46 @@ defmodule IxpipeCore.CLITest do
     big = Enum.find(Jason.decode!(json)["nodes"], &(&1["id"] == "big"))
     assert big["outputs"] == %{"true" => 2, "false" => 2}
   end
+
+  describe "macros" do
+    setup %{dir: dir} do
+      File.write!(Path.join(dir, "big.yaml"), """
+      macro:
+        parameters: [{name: threshold, type: integer, default: 10}]
+      nodes:
+        - {id: rows, tool: macro_input, config: {path: orders.csv}}
+        - {id: f, tool: filter, inputs: {in: rows}, config: {expr: "amount > {{threshold}}"}}
+        - {id: big, tool: macro_output, inputs: {in: f.true}}
+      """)
+
+      :ok
+    end
+
+    test "run uses macros relative to the workflow", %{dir: dir} do
+      path =
+        workflow(dir, """
+        nodes:
+          - {id: orders, tool: input_csv, config: {path: orders.csv}}
+          - {id: m, tool: macro, inputs: {rows: orders}, config: {path: big.yaml, threshold: 20}}
+        """)
+
+      assert {0, out} = cli(["run", path])
+      assert out =~ ~r/m\s+macro\s+2 rows/
+    end
+
+    test "--param sets a macro workflow's parameters", %{dir: dir} do
+      path = Path.join(dir, "big.yaml")
+      assert {0, out} = cli(["run", path])
+      assert out =~ ~r/big\s+macro_output\s+3 rows/
+
+      assert {0, out} = cli(["run", path, "--param", "threshold=40"])
+      assert out =~ ~r/big\s+macro_output\s+1 row/
+
+      assert {2, out} = cli(["run", path, "--param", "colour=red"])
+      assert out =~ "big.yaml has no parameter colour"
+
+      assert {2, out} = cli(["run", path, "--param", "threshold=lots"])
+      assert out =~ "threshold: Enter a whole number"
+    end
+  end
 end

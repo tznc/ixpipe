@@ -16,21 +16,19 @@ defmodule IxpipeCore do
   long as a result references the database. The first node to raise fails
   the run; nodes downstream of it do not run.
 
-  Options: `:settings`, DuckDB `SET` options such as `memory_limit`.
+  A macro run on its own takes its parameters' defaults, or `:params`.
+  A failure inside a macro names the inner tool (`node/inner`).
+
+  Options: `:settings`, DuckDB `SET` options such as `memory_limit`;
+  `:params`, values for a macro workflow's parameters by name.
   """
   @spec run(Spec.t(), keyword()) ::
           {:ok, %{String.t() => Table.t()}}
           | {:error, {:node_failed, String.t(), String.t()}}
   def run(%Spec{} = spec, opts \\ []) do
     {:ok, db} = Duck.open(Keyword.get(opts, :settings, []))
-
-    results =
-      spec
-      |> to_runic(db)
-      |> Workflow.react_until_satisfied(:run)
-      |> Workflow.raw_productions_by_component()
-      |> Enum.flat_map(fn {id, [value | _]} -> flatten(id, value) end)
-      |> Map.new()
+    spec = IxpipeCore.Macro.bind(spec, Keyword.get(opts, :params, %{}))
+    results = execute(spec, db)
 
     case Enum.find(Map.values(results), &match?({:failed, _, _}, &1)) do
       nil -> {:ok, results}
@@ -38,13 +36,29 @@ defmodule IxpipeCore do
     end
   end
 
-  @doc "Compiles `spec` into a Runic workflow with one step per node, working in `db`."
-  @spec to_runic(Spec.t(), Duck.db()) :: Workflow.t()
-  def to_runic(%Spec{} = spec, db) do
-    tools = Map.new(spec.nodes, &{&1.id, &1.tool})
+  @doc false
+  # Runs `spec` in `db`, naming its tables under `prefix`; failed nodes map
+  # to `{:failed, id, message}`.
+  def execute(%Spec{} = spec, db, prefix \\ "") do
+    spec
+    |> to_runic(db, prefix)
+    |> Workflow.react_until_satisfied(:run)
+    |> Workflow.raw_productions_by_component()
+    |> Enum.flat_map(fn {id, [value | _]} -> flatten(id, value) end)
+    |> Map.new()
+  end
+
+  @doc """
+  Compiles `spec` into a Runic workflow with one step per node, working in
+  `db`. Each node's tables are named for `prefix` and its id (a macro's
+  inner nodes run under `node/`).
+  """
+  @spec to_runic(Spec.t(), Duck.db(), String.t()) :: Workflow.t()
+  def to_runic(%Spec{} = spec, db, prefix \\ "") do
+    nodes = Map.new(spec.nodes, &{&1.id, &1})
 
     Enum.reduce(spec.nodes, Runic.workflow(name: spec.name || "ixpipe"), fn node, wrk ->
-      ports = node.tool.inputs()
+      ports = IxpipeCore.Tools.inputs(node)
       sources = Enum.map(ports, &Spec.source(node.inputs[&1]))
       # A Runic join never fires on a repeated parent, so each parent node
       # feeds the step once; `slots` maps every port to its parent's
@@ -54,10 +68,16 @@ defmodule IxpipeCore do
       slots =
         for {port, {from, output}} <- Enum.zip(ports, sources) do
           index = Enum.find_index(unique, &(&1 == from))
-          {port, index, output || hd(IxpipeCore.Tools.outputs(tools[from]))}
+          {port, index, output || hd(IxpipeCore.Tools.outputs(nodes[from]))}
         end
 
-      ctx = %Context{db: db, id: node.id}
+      ctx = %Context{db: db, id: prefix <> node.id}
+      # A macro node's tool runs the macro it loaded.
+      node =
+        if node.macro,
+          do: %{node | config: Map.put(node.config, "_macro", node.macro)},
+          else: node
+
       Workflow.add(wrk, step(node, ctx, slots, length(unique)), add_opts(unique))
     end)
   end

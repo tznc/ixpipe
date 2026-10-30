@@ -24,7 +24,10 @@ defmodule IxpipeCore.Tools do
     "transpose" => IxpipeCore.Tools.Transpose,
     "text_to_columns" => IxpipeCore.Tools.TextToColumns,
     "regex" => IxpipeCore.Tools.Regex,
-    "data_cleansing" => IxpipeCore.Tools.DataCleansing
+    "data_cleansing" => IxpipeCore.Tools.DataCleansing,
+    "macro_input" => IxpipeCore.Tools.MacroInput,
+    "macro_output" => IxpipeCore.Tools.MacroOutput,
+    "macro" => IxpipeCore.Tools.Macro
   }
 
   @spec lookup(term()) :: module() | nil
@@ -32,11 +35,32 @@ defmodule IxpipeCore.Tools do
 
   @names Map.new(@tools, fn {name, module} -> {module, name} end)
 
-  @doc "A tool's output names; `[\"out\"]` unless it declares several."
-  @spec outputs(module()) :: [String.t()]
-  def outputs(tool) do
+  alias IxpipeCore.Spec.Node
+
+  @doc """
+  A node's input ports. A tool whose ports depend on the node (a macro)
+  exports `inputs/1`; the rest `inputs/0`.
+  """
+  @spec inputs(Node.t()) :: [String.t()]
+  def inputs(%Node{tool: tool} = node),
+    do: if(exports?(tool, :inputs, 1), do: tool.inputs(node), else: tool.inputs())
+
+  @doc "A tool's (or a node's) output names; `[\"out\"]` unless it declares several."
+  @spec outputs(module() | Node.t()) :: [String.t()]
+  def outputs(%Node{tool: tool} = node),
+    do: if(exports?(tool, :outputs, 1), do: tool.outputs(node), else: outputs(tool))
+
+  def outputs(tool),
+    do: if(exports?(tool, :outputs, 0), do: tool.outputs(), else: ["out"])
+
+  @doc "A node's settings: `fields/1` for a tool whose settings depend on the node."
+  @spec fields(Node.t()) :: [IxpipeCore.Tool.field()]
+  def fields(%Node{tool: tool} = node),
+    do: if(exports?(tool, :fields, 1), do: tool.fields(node), else: tool.fields())
+
+  defp exports?(tool, fun, arity) do
     Code.ensure_loaded(tool)
-    if function_exported?(tool, :outputs, 0), do: tool.outputs(), else: ["out"]
+    function_exported?(tool, fun, arity)
   end
 
   @spec name(module()) :: String.t()
@@ -46,7 +70,8 @@ defmodule IxpipeCore.Tools do
   @spec names() :: [String.t()]
   def names, do: @tools |> Map.keys() |> Enum.sort()
 
-  @doc "The config keys `tool` cannot run without: its non-optional fields."
-  @spec required(module()) :: [String.t()]
+  @doc "The config keys a node (or a tool) cannot run without: its non-optional fields."
+  @spec required(module() | Node.t()) :: [String.t()]
+  def required(%Node{} = node), do: for(field <- fields(node), !field[:optional], do: field.key)
   def required(tool), do: for(field <- tool.fields(), !field[:optional], do: field.key)
 end
