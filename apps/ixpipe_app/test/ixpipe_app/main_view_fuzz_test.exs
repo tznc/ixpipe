@@ -22,13 +22,15 @@ defmodule IxpipeApp.MainViewFuzzTest do
 
       try do
         Enum.reduce(steps, [], fn {pick, dx, dy}, trail ->
-          actions = UI.actions(window)
+          # The window can turn from a desktop's to a phone's at any step.
+          actions = UI.actions(window) ++ [{:resize, {390, 844}}, {:resize, {1200, 800}}]
           action = Enum.at(actions, rem(pick, length(actions)))
           trail = [action | trail]
 
           case action do
             {:click, label} -> Test.click(window, label)
             {:drag, label} -> Test.drag(window, label, dx, dy)
+            {:resize, {width, height}} -> Test.resize(window, width, height)
           end
 
           assert_invariants(window, pid, dir, Enum.reverse(trail))
@@ -68,6 +70,12 @@ defmodule IxpipeApp.MainViewFuzzTest do
     assert UI.actions(window) != [], "nothing left to do after #{inspect(trail)}"
 
     %{assigns: assigns} = :sys.get_state(pid)
+
+    # A phone shows the pane bar on the canvas; a desktop never does.
+    phone? = is_integer(assigns.width) and assigns.width < 640
+
+    assert UI.find(window, "Panes") != [] == (phone? and assigns.spec != nil),
+           "pane bar out of step with the width after #{inspect(trail)}"
 
     if spec = assigns.spec do
       ids = Enum.map(spec.nodes, & &1.id)

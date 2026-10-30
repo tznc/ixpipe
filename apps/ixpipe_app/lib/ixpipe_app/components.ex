@@ -64,7 +64,7 @@ defmodule IxpipeApp.Components do
   }
 
   attr(:variant, :atom, default: :secondary, values: Map.keys(@variants))
-  attr(:size, :atom, default: :md, values: [:sm, :md])
+  attr(:size, :atom, default: :md, values: [:sm, :md, :touch])
   attr(:class, :string, default: "")
   attr(:icon, :string, default: nil, doc: "a lucide icon name, drawn before the label")
   attr(:rest, :global, include: ~w(type disabled accept default-name title))
@@ -75,6 +75,7 @@ defmodule IxpipeApp.Components do
   per view; `:secondary` is everything else; `:quiet` is for dense toolbars
   and lists; `:danger` is for delete, remove, drop and reset; `:link` for
   navigation such as breadcrumbs. Label it with a verb and an object.
+  `size: :touch` is the phone size: at least 40px each way.
   An `icon` (lucide, as in ixtable) goes before the label, in its colour; an
   icon-only button needs an `aria-label`. `title` is a tooltip, such as the
   command's shortcut.
@@ -91,32 +92,38 @@ defmodule IxpipeApp.Components do
 
   defp size(:sm), do: "px-2 py-1 text-xs font-medium"
   defp size(:md), do: "px-3 py-1 text-sm font-medium"
+  defp size(:touch), do: "min-h-10 min-w-10 justify-center px-3 text-sm font-medium"
 
   ## Ribbon
 
   attr(:tabs, :list, required: true, doc: "`{key, label}` pairs")
   attr(:selected, :string, required: true)
   attr(:event, :string, default: "ribbon")
+  attr(:touch, :boolean, default: false, doc: "phone size: 40px tabs")
   slot(:inner_block, required: true)
 
   @doc """
   The ribbon (as in ixtable, after Access): a row of tabs over the selected
   tab's labelled command groups (`ribbon_group/1`). Tabs are labelled
-  "<Label> tab" and send `event` with `phx-value-tab`.
+  "<Label> tab" and send `event` with `phx-value-tab`. Both rows scroll
+  sideways when the window is too narrow for them.
   """
   def ribbon(assigns) do
     ~H"""
     <div class="flex-col w-full bg-sidebar" aria-label="Ribbon">
-      <div class="flex-row items-center gap-1 px-2 pt-1" role="tablist">
+      <div class="flex-row items-center gap-1 px-2 pt-1 overflow-x-auto" role="tablist">
         <button :for={{key, label} <- @tabs} data-variant="tab" role="tab" aria-selected={to_string(key == @selected)}
           aria-label={"#{label} tab"} phx-click={@event} phx-value-tab={key}
-          class={"px-2 py-1 rounded-md cursor-pointer text-xs " <> tab_look(key == @selected)}>{label}</button>
+          class={"#{tab_size(@touch)} rounded-md cursor-pointer text-xs " <> tab_look(key == @selected)}>{label}</button>
       </div>
       <div class="flex-row items-stretch px-2 py-1 overflow-x-auto">{render_slot(@inner_block)}</div>
       <div class="h-px w-full bg-border" />
     </div>
     """
   end
+
+  defp tab_size(false), do: "px-2 py-1"
+  defp tab_size(true), do: "min-h-10 flex-row items-center px-3"
 
   defp tab_look(true), do: "font-semibold text-link bg-primary/12"
   defp tab_look(false), do: "font-medium text-muted-foreground hover:bg-muted"
@@ -139,6 +146,28 @@ defmodule IxpipeApp.Components do
     </div>
     """
   end
+
+  attr(:tabs, :list, required: true, doc: "`{key, label}` pairs")
+  attr(:selected, :string, required: true)
+  attr(:event, :string, required: true)
+  attr(:label, :string, required: true)
+
+  @doc """
+  A phone's pane switcher, across the bottom of the window: equal tabs,
+  each labelled "Show <label>" and sending `event` with `phx-value-pane`.
+  The selected tab takes the selection's teal tint.
+  """
+  def tab_bar(assigns),
+    do: ~H"""
+    <div class="flex-col w-full bg-sidebar">
+      <div class="h-px w-full bg-border" />
+      <div class="flex-row items-center gap-1 p-1" role="tablist" aria-label={@label}>
+        <button :for={{key, label} <- @tabs} data-variant="tab" role="tab" aria-selected={to_string(key == @selected)}
+          aria-label={"Show #{String.downcase(label)}"} phx-click={@event} phx-value-pane={key}
+          class={"flex-1 min-h-10 flex-row items-center justify-center rounded-md cursor-pointer text-sm " <> tab_look(key == @selected)}>{label}</button>
+      </div>
+    </div>
+    """
 
   ## Status
 
@@ -205,6 +234,8 @@ defmodule IxpipeApp.Components do
     doc: "`{label, event}` pairs, then the current item's label"
   )
 
+  attr(:touch, :boolean, default: false, doc: "phone size: 40px links")
+
   @doc "Drill-in navigation: earlier crumbs are links, the last is plain text."
   def breadcrumb(assigns) do
     {links, [current]} = Enum.split(assigns.crumbs, -1)
@@ -213,7 +244,8 @@ defmodule IxpipeApp.Components do
     ~H"""
     <div class="flex-row items-center gap-1">
       <div :for={{label, event} <- @links} class="flex-row items-center gap-1">
-        <.button variant={:link} size={:sm} class="px-0" phx-click={event} aria-label={label}>{label}</.button>
+        <.button variant={:link} size={:sm} class={if @touch, do: "px-0 min-h-10", else: "px-0"} phx-click={event}
+          aria-label={label}>{label}</.button>
         <text class="text-xs text-muted-foreground">/</text>
       </div>
       <text class="text-xs text-muted-foreground">{@current}</text>

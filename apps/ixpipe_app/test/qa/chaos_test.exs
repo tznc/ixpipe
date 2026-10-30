@@ -3,6 +3,7 @@ defmodule IxpipeApp.QA.ChaosTest do
   # app process, the Playwright server and the app log checked after every
   # step. Replay a failure with its seed:
   #   QA_SEED=123 QA_STEPS=200 xvfb-run -a mix test --only chaos
+  # A scroll is picked only while node cards (the canvas) are on screen.
   use ExUnit.Case, async: false
   alias Baguette.Playwright
   alias IxpipeApp.QA
@@ -10,9 +11,17 @@ defmodule IxpipeApp.QA.ChaosTest do
   @moduletag :chaos
   @moduletag timeout: :infinity
 
+  # QA_PHONE=1 walks the phone layout (390 x 844) instead.
   setup do
     qa = QA.launch!(open: "sales.yaml")
     on_exit(fn -> QA.stop(qa) end)
+
+    if System.get_env("QA_PHONE") do
+      assert :ok = Playwright.await_text(qa.page, "orders")
+      :ok = Playwright.resize(qa.page, 390, 844)
+      assert :ok = Playwright.await(qa.page, role: "tab", name: "Show canvas")
+    end
+
     qa
   end
 

@@ -31,10 +31,18 @@ defmodule IxpipeApp.DesignRulesTest do
     """)
   end
 
-  # Every screen the window can show, reached as a user would.
+  # Every screen the window can show, reached as a user would, on a desktop
+  # window and on a phone's.
   defp screens(ctx) do
+    desktop = screens(ctx, {1200, 800})
+    phone = screens(%{ctx | window: System.unique_integer([:positive])}, {390, 844})
+    desktop ++ for({screen, root} <- phone, do: {:"phone #{screen}", root})
+  end
+
+  defp screens(ctx, {width, height}) do
     seed(ctx.dir)
     w = start(ctx)
+    Test.resize(w, width, height)
     home = frame(w)
     Test.click(w, "Open sales.yaml")
     canvas = frame(w)
@@ -52,6 +60,8 @@ defmodule IxpipeApp.DesignRulesTest do
     Test.click(w, "Workflows")
     Test.click(w, "New workflow")
     empty = frame(w)
+    Test.click(w, "Workflows")
+    File.rm!(Path.join(ctx.dir, "untitled-1.yaml"))
 
     [
       home: home,
@@ -101,6 +111,8 @@ defmodule IxpipeApp.DesignRulesTest do
     screens = screens(ctx)
     assert callout(screens[:failed]) == "danger"
     assert callout(screens[:ran]) == "success"
+    assert callout(screens[:"phone failed"]) == "danger"
+    assert callout(screens[:"phone ran"]) == "success"
   end
 
   test "every empty list or canvas has an empty state", ctx do

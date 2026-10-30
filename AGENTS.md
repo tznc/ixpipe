@@ -64,6 +64,12 @@ one-off style is a bug. `design_rules_test.exs` enforces what can be checked.
   and a short noun ("CSV" in the Input group); zoom is icon-only with an
   `aria-label`. The group name is a caption beneath. Save (`save`) and Run
   (`play`) stay in the header, always visible.
+- **Phone** (window under 640px wide, learnt from baguette's
+  `phx-window-resize`): Save and Run icon-only in the header, the ribbon's
+  rows scroll sideways, and Canvas / Properties / Results are panes of a
+  `<.tab_bar>` at the bottom (selecting a tool shows Properties; a run with
+  one selected shows Results). Controls outside the canvas's cards are
+  `size: :touch` (at least 40px). Wider windows keep the desktop layout.
 - **Shortcuts** (`phx-window-keydown` on the canvas; Ctrl or Cmd): Z undo,
   Shift+Z or Y redo, S save, Enter run, = and - zoom, 0 restore view. Each
   command's `title` tooltip names its shortcut ("Undo (Ctrl+Z)"; Cmd on

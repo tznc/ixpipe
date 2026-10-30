@@ -18,6 +18,10 @@ defmodule IxpipeApp.MainView do
   @zooms [50, 75, 100, 125, 150]
   @history 100
   @preview_rows 50
+  # Narrower than this (a phone in portrait), the window shows one pane at
+  # a time: Canvas, Properties or Results.
+  @phone_width 640
+  @panes [{"canvas", "Canvas"}, {"properties", "Properties"}, {"results", "Results"}]
   # The ribbon's tabs: Home edits and views the workflow; the rest hold the
   # tools, by category, in labelled groups.
   @ribbon [
@@ -63,7 +67,10 @@ defmodule IxpipeApp.MainView do
       last_step: nil,
       zoom: 100,
       pan: {0, 0},
-      tab: "home"
+      tab: "home",
+      width: nil,
+      height: nil,
+      pane: "canvas"
     }
 
     case args[:path] do
@@ -73,11 +80,14 @@ defmodule IxpipeApp.MainView do
   end
 
   def render(%{spec: nil} = assigns) do
+    assigns = Map.put(assigns, :phone, phone?(assigns))
+
     ~H"""
-    <div class="relative size-full flex-col gap-6 p-6 bg-background text-foreground">
+    <div class={"relative size-full flex-col gap-6 #{if @phone, do: "p-4", else: "p-6"} bg-background text-foreground"}
+      phx-window-resize="resize">
       <div class="flex-row items-center justify-between">
         <.title>Workflows</.title>
-        <.button variant={:primary} phx-click="new" aria-label="New workflow">New workflow</.button>
+        <.button variant={:primary} size={touch(@phone)} phx-click="new" aria-label="New workflow">New workflow</.button>
       </div>
       <.callout :if={@error} tone={:danger} title="This workflow can't be opened.">{@error}</.callout>
       <.empty_state :if={@files == []} title="No workflows yet">
@@ -85,7 +95,7 @@ defmodule IxpipeApp.MainView do
       </.empty_state>
       <ul :if={@files != []} aria-label="Workflows" class="flex-col gap-1">
         <li :for={{file, modified} <- @files} class="flex-row items-center justify-between gap-3">
-          <.button variant={:quiet} phx-click="open" phx-value-file={file} aria-label={"Open #{file}"}>
+          <.button variant={:quiet} size={touch(@phone)} phx-click="open" phx-value-file={file} aria-label={"Open #{file}"}>
             {file}
           </.button>
           <.caption>{modified}</.caption>
@@ -96,49 +106,55 @@ defmodule IxpipeApp.MainView do
   end
 
   def render(assigns) do
-    assigns = Map.put(assigns, :node, Enum.find(assigns.spec.nodes, &(&1.id == assigns.selected)))
+    assigns =
+      Map.merge(assigns, %{
+        node: Enum.find(assigns.spec.nodes, &(&1.id == assigns.selected)),
+        phone: phone?(assigns)
+      })
 
     ~H"""
-    <div class="relative size-full flex-col bg-background text-foreground" phx-window-keydown="shortcut">
-      <div class="flex-row items-center justify-between gap-3 px-4 py-3">
-        <div class="flex-col gap-1">
-          <.breadcrumb crumbs={[{"Workflows", "back"}, Path.basename(@path)]} />
+    <div class="relative size-full flex-col bg-background text-foreground" phx-window-keydown="shortcut"
+      phx-window-resize="resize">
+      <div class={"flex-row items-center justify-between gap-3 " <> if(@phone, do: "px-4 py-1", else: "px-4 py-3")}>
+        <div class={if @phone, do: "flex-col flex-1 min-w-0", else: "flex-col gap-1"}>
+          <.breadcrumb crumbs={[{"Workflows", "back"}, Path.basename(@path)]} touch={@phone} />
           <.title>{@spec.name || Path.rootname(Path.basename(@path))}</.title>
         </div>
-        <div class="flex-row items-center gap-2">
-          <.button phx-click="save" icon="save" aria-label="Save workflow"
-            title={"Save workflow (#{shortcut("S")})"}>Save workflow</.button>
-          <.button variant={:primary} phx-click="run" icon="play" aria-label="Run workflow"
-            title={"Run workflow (#{shortcut("Enter")})"}>Run workflow</.button>
+        <%!-- On a phone, Save and Run keep their place as icon-only buttons. --%>
+        <div class={"flex-row items-center shrink-0 " <> if(@phone, do: "gap-1", else: "gap-2")}>
+          <.button phx-click="save" icon="save" aria-label="Save workflow" size={touch(@phone, :md)}
+            title={"Save workflow (#{shortcut("S")})"}>{if !@phone, do: "Save workflow"}</.button>
+          <.button variant={:primary} phx-click="run" icon="play" aria-label="Run workflow" size={touch(@phone, :md)}
+            title={"Run workflow (#{shortcut("Enter")})"}>{if !@phone, do: "Run workflow"}</.button>
         </div>
       </div>
       <div class="h-px w-full bg-border" />
-      <.ribbon tabs={ribbon_tabs()} selected={@tab}>
+      <.ribbon tabs={ribbon_tabs()} selected={@tab} touch={@phone}>
         <%= if @tab == "home" do %>
           <.ribbon_group label="Edit">
-            <.button size={:sm} variant={:quiet} phx-click="undo" disabled={@past == []} icon="undo-2"
+            <.button size={touch(@phone, :sm)} variant={:quiet} phx-click="undo" disabled={@past == []} icon="undo-2"
               aria-label="Undo" title={"Undo (#{shortcut("Z")})"}>Undo</.button>
-            <.button size={:sm} variant={:quiet} phx-click="redo" disabled={@future == []} icon="redo-2"
+            <.button size={touch(@phone, :sm)} variant={:quiet} phx-click="redo" disabled={@future == []} icon="redo-2"
               aria-label="Redo" title={"Redo (#{shortcut("Shift+Z")})"}>Redo</.button>
           </.ribbon_group>
           <.ribbon_group label="View">
-            <.button size={:sm} variant={:quiet} phx-click="zoom" phx-value-by="-1" icon="zoom-out"
+            <.button size={touch(@phone, :sm)} variant={:quiet} phx-click="zoom" phx-value-by="-1" icon="zoom-out"
               disabled={@zoom == hd(zooms())} aria-label="Zoom out" title={"Zoom out (#{shortcut("-")})"} />
             <.caption class="w-[40px] text-center">{@zoom}%</.caption>
-            <.button size={:sm} variant={:quiet} phx-click="zoom" phx-value-by="1" icon="zoom-in"
+            <.button size={touch(@phone, :sm)} variant={:quiet} phx-click="zoom" phx-value-by="1" icon="zoom-in"
               disabled={@zoom == List.last(zooms())} aria-label="Zoom in" title={"Zoom in (#{shortcut("=")})"} />
-            <.button size={:sm} variant={:quiet} phx-click="reset_view" icon="scan" aria-label="Restore view"
+            <.button size={touch(@phone, :sm)} variant={:quiet} phx-click="reset_view" icon="scan" aria-label="Restore view"
               title={"Restore view (#{shortcut("0")})"}>Restore view</.button>
           </.ribbon_group>
         <% else %>
           <.ribbon_group :for={{group, tools} <- ribbon_groups(@tab)} label={group}>
-            <.button :for={tool <- tools} size={:sm} variant={:quiet} phx-click="add" phx-value-tool={tool}
+            <.button :for={tool <- tools} size={touch(@phone, :sm)} variant={:quiet} phx-click="add" phx-value-tool={tool}
               icon={tool_icon(tool)} aria-label={"Add #{tool}"}>{command_label(group, tool)}</.button>
           </.ribbon_group>
         <% end %>
       </.ribbon>
-      <div class="flex-row flex-1">
-        <div class="flex-col flex-1">
+      <div class={"relative flex-1 " <> if(@phone, do: "flex-col", else: "flex-row")}>
+        <div :if={!@phone || @pane == "canvas"} class="flex-col flex-1">
         <div class="relative flex-1 overflow-hidden bg-canvas">
           <.empty_state :if={@spec.nodes == []} title="This workflow is empty">
             Add a tool from a ribbon tab above.
@@ -188,21 +204,21 @@ defmodule IxpipeApp.MainView do
           </div>
           </div>
           <%!-- Top right of the canvas, clear of the header's buttons. --%>
-          <.toast :if={@toast} message={@toast} />
-          <%!-- Over the canvas, so status never moves the layout; the opaque
-            backing keeps the callout's tint from showing the canvas through. --%>
-          <div :if={@status} class="absolute left-[16px] bottom-[16px] w-[420px] rounded-md bg-background shadow-md">
-            <.callout tone={elem(@status, 0)} title={elem(@status, 1)}>{elem(@status, 2)}</.callout>
-          </div>
+          <.feedback :if={!@phone} toast={@toast} status={@status} phone={false} />
         </div>
-        <div class="h-px w-full bg-border" />
-        <.results node={@node} output={@node && output_key(@node, @output)}
+        <div :if={!@phone} class="h-px w-full bg-border" />
+        <.results :if={!@phone} node={@node} output={@node && output_key(@node, @output)}
           preview={@node && @previews[output_key(@node, @output)]} />
         </div>
-        <div class="w-px h-full bg-border" />
-        <.properties node={@node} drafts={@drafts} errors={@errors} formula_rows={@formula_rows}
-          dir={@dir} />
+        <.results :if={@phone && @pane == "results"} node={@node} output={@node && output_key(@node, @output)}
+          preview={@node && @previews[output_key(@node, @output)]} phone />
+        <div :if={!@phone} class="w-px h-full bg-border" />
+        <.properties :if={!@phone || @pane == "properties"} node={@node} drafts={@drafts} errors={@errors}
+          formula_rows={@formula_rows} dir={@dir} phone={@phone} />
+        <%!-- On a phone, over whichever pane shows. --%>
+        <.feedback :if={@phone} toast={@toast} status={@status} phone />
       </div>
+      <.tab_bar :if={@phone} tabs={panes()} selected={@pane} event="pane" label="Panes" />
     </div>
     """
   end
@@ -238,7 +254,18 @@ defmodule IxpipeApp.MainView do
     {:noreply, select(assigns, List.last(assigns.spec.nodes).id)}
   end
 
-  def handle_event("select", %{"id" => id}, assigns), do: {:noreply, select(assigns, id)}
+  # On a phone, choosing a tool shows its properties.
+  def handle_event("select", %{"id" => id}, assigns) do
+    assigns = select(assigns, id)
+    {:noreply, if(phone?(assigns), do: %{assigns | pane: "properties"}, else: assigns)}
+  end
+
+  def handle_event("resize", %{"width" => width, "height" => height}, assigns),
+    do: {:noreply, %{assigns | width: width, height: height}}
+
+  def handle_event("pane", %{"pane" => pane}, assigns)
+      when pane in ["canvas", "properties", "results"],
+      do: {:noreply, %{assigns | pane: pane}}
 
   # Text settings: the form sends every value with the one that changed as
   # _target. Formula rows are one setting, a line each.
@@ -379,7 +406,9 @@ defmodule IxpipeApp.MainView do
         status =
           {:success, "Run succeeded", "Select a tool to see its rows in Results."}
 
-        {:noreply, %{assigns | status: status, rows: rows, previews: previews}}
+        # On a phone, a selected tool's rows show at once.
+        pane = if phone?(assigns) && assigns.selected, do: "results", else: assigns.pane
+        {:noreply, %{assigns | status: status, rows: rows, previews: previews, pane: pane}}
 
       {:error, {:node_failed, id, message}} ->
         status = {:danger, "#{id} failed.", "#{message} Fix its config and run again."}
@@ -399,7 +428,17 @@ defmodule IxpipeApp.MainView do
           String.ends_with?(file, ".yaml"),
           do: {file, modified(Path.join(assigns.dir, file))}
 
-    %{assigns | files: files, spec: nil, path: nil, from: nil, status: nil, toast: nil, rows: %{}}
+    %{
+      assigns
+      | files: files,
+        spec: nil,
+        path: nil,
+        from: nil,
+        status: nil,
+        toast: nil,
+        rows: %{},
+        pane: "canvas"
+    }
   end
 
   defp open(assigns, path) do
@@ -584,19 +623,37 @@ defmodule IxpipeApp.MainView do
 
   ## Panels
 
+  attr(:toast, :string, default: nil)
+  attr(:status, :any, default: nil)
+  attr(:phone, :boolean, required: true)
+
+  # The toast and the status callout, over the canvas (on a phone, over
+  # whichever pane shows), so feedback never moves the layout; the opaque
+  # backing keeps the callout's tint from showing the canvas through.
+  defp feedback(assigns) do
+    ~H"""
+    <.toast :if={@toast} message={@toast} />
+    <div :if={@status} class={"absolute rounded-md bg-background shadow-md " <>
+      if(@phone, do: "left-[12px] right-[12px] bottom-[12px]", else: "left-[16px] bottom-[16px] w-[420px]")}>
+      <.callout tone={elem(@status, 0)} title={elem(@status, 1)}>{elem(@status, 2)}</.callout>
+    </div>
+    """
+  end
+
   attr(:node, :map, default: nil)
   attr(:preview, :map, default: nil)
   attr(:output, :string, default: nil)
+  attr(:phone, :boolean, default: false)
 
   defp results(assigns) do
     ~H"""
-    <section class="flex-col gap-2 p-4 h-[240px]" aria-label="Results">
+    <section class={"flex-col gap-2 p-4 " <> if(@phone, do: "flex-1", else: "h-[240px]")} aria-label="Results">
       <div class="flex-row items-center gap-2">
         <.section>Results</.section>
         <.caption :if={@preview}>{@output} · {plural(@preview.total, "row")}{if @preview.total > length(@preview.rows), do: ", first #{length(@preview.rows)} shown"}</.caption>
       </div>
       <div :if={@node && multi?(@node)} class="flex-row gap-1">
-        <.button :for={out <- Tools.outputs(@node.tool)} size={:sm} phx-click="show_output"
+        <.button :for={out <- Tools.outputs(@node.tool)} size={touch(@phone, :sm)} phx-click="show_output"
           phx-value-output={out} aria-label={"Show #{out} output"}
           class={if @output == "#{@node.id}.#{out}", do: "border-primary bg-primary/12", else: ""}>
           {out}
@@ -633,10 +690,12 @@ defmodule IxpipeApp.MainView do
   attr(:errors, :map, required: true)
   attr(:formula_rows, :integer, required: true)
   attr(:dir, :string, required: true)
+  attr(:phone, :boolean, default: false)
 
   defp properties(assigns) do
     ~H"""
-    <aside class="flex-col gap-6 p-4 w-[320px] overflow-y-scroll" aria-label="Configuration">
+    <aside class={"flex-col gap-6 p-4 overflow-y-scroll " <> if(@phone, do: "flex-1 w-full", else: "w-[320px]")}
+      aria-label="Configuration">
       <.empty_state :if={!@node} title="Nothing selected">Select a tool to configure it.</.empty_state>
       <div :if={@node} class="flex-col gap-1">
         <.section>{@node.id}</.section>
@@ -645,7 +704,7 @@ defmodule IxpipeApp.MainView do
       <.caption :if={@node && @node.tool.fields() == []}>This tool has no settings.</.caption>
       <form :if={@node} phx-change="config" aria-label="Settings" class="flex-col gap-3">
         <.field :for={field <- @node.tool.fields()} field={field} node={@node} drafts={@drafts}
-          error={@errors[field.key]} formula_rows={@formula_rows} dir={@dir} />
+          error={@errors[field.key]} formula_rows={@formula_rows} dir={@dir} size={touch(@phone, :sm)} />
       </form>
     </aside>
     """
@@ -657,6 +716,7 @@ defmodule IxpipeApp.MainView do
   attr(:error, :string, default: nil)
   attr(:formula_rows, :integer, required: true)
   attr(:dir, :string, default: nil)
+  attr(:size, :atom, default: :sm)
 
   # A database tool's saved connection: the saved connections of its kind,
   # as choices, from connections.yaml in the workflows folder.
@@ -672,7 +732,7 @@ defmodule IxpipeApp.MainView do
         <.caption :if={@field[:optional]}>Optional</.caption>
       </div>
       <div :if={@names != []} class="flex-row flex-wrap gap-1">
-        <.button :for={name <- @names} size={:sm} phx-click="choose" phx-value-key="connection"
+        <.button :for={name <- @names} size={@size} phx-click="choose" phx-value-key="connection"
           phx-value-value={name} aria-label={"Connection #{name}"}
           class={if @node.config["connection"] == name, do: "border-primary bg-primary/12", else: ""}>
           {name}
@@ -702,7 +762,7 @@ defmodule IxpipeApp.MainView do
     <div class="flex-col gap-1">
       <.label>{@field.label}</.label>
       <div class="flex-row flex-wrap gap-1">
-        <.button :for={option <- @field.options} size={:sm} phx-click="choose" phx-value-key={@field.key}
+        <.button :for={option <- @field.options} size={@size} phx-click="choose" phx-value-key={@field.key}
           phx-value-value={option} aria-label={"#{@field.label} #{option}"}
           class={if chosen(@field, @node) == option, do: "border-primary bg-primary/12", else: ""}>
           {option}
@@ -732,7 +792,7 @@ defmodule IxpipeApp.MainView do
       <.caption :if={@error} class="text-danger">{@error}</.caption>
       <.caption :if={!@error && @field[:hint]}>{@field.hint}</.caption>
       <div class="flex-row">
-        <.button size={:sm} phx-click="add_formula" aria-label="Add a formula">Add a formula</.button>
+        <.button size={@size} phx-click="add_formula" aria-label="Add a formula">Add a formula</.button>
       </div>
     </div>
     """
@@ -747,11 +807,11 @@ defmodule IxpipeApp.MainView do
           <input name={@field.key} value={@drafts[@field.key] || Config.format(@field, @node.config[@field.key])}
             aria-label={@field.label} class="w-full" />
         </div>
-        <.button :if={!@field[:save]} size={:sm} phx-pick-file="picked" phx-value-key={@field.key}
+        <.button :if={!@field[:save]} size={@size} phx-pick-file="picked" phx-value-key={@field.key}
           accept={Enum.join(@field[:accept] || [], ",")} aria-label={"Choose #{String.downcase(@field.label)}"}>
           Choose…
         </.button>
-        <.button :if={@field[:save]} size={:sm} phx-pick-save="picked" phx-value-key={@field.key}
+        <.button :if={@field[:save]} size={@size} phx-pick-save="picked" phx-value-key={@field.key}
           accept={Enum.join(@field[:accept] || [], ",")} default-name={"#{@node.id}.#{hd(@field[:accept] || ["csv"])}"}
           aria-label={"Choose #{String.downcase(@field.label)}"}>
           Choose…
@@ -867,6 +927,14 @@ defmodule IxpipeApp.MainView do
   # In the Input and Output groups the group names the direction: "CSV".
   defp command_label(group, tool),
     do: tool |> tool_label() |> String.replace_prefix(group <> " ", "")
+
+  defp phone?(%{width: width}), do: is_integer(width) and width < @phone_width
+  defp panes, do: @panes
+
+  # The phone's touch size (40px), or `size` on a wider window.
+  defp touch(phone, size \\ :md)
+  defp touch(true, _size), do: :touch
+  defp touch(false, size), do: size
 
   defp node_width, do: @node_width
   defp port_y, do: @port_y
