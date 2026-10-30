@@ -31,7 +31,9 @@ defmodule IxpipeCore.MixProject do
       {:yaml_elixir, "~> 2.11"},
       {:jason, "~> 1.4"},
       {:xlsx_reader, "~> 0.8.12"},
-      {:elixlsx, "~> 0.6.0"}
+      {:elixlsx, "~> 0.6.0"},
+      {:exqlite, "~> 0.43"},
+      {:postgrex, "~> 0.22"}
     ]
   end
 end

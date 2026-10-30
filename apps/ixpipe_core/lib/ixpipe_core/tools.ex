@@ -16,7 +16,10 @@ defmodule IxpipeCore.Tools do
     "input_excel" => IxpipeCore.Tools.InputExcel,
     "output_excel" => IxpipeCore.Tools.OutputExcel,
     "input_parquet" => IxpipeCore.Tools.InputParquet,
-    "output_parquet" => IxpipeCore.Tools.OutputParquet
+    "output_parquet" => IxpipeCore.Tools.OutputParquet,
+    "input_sqlite" => IxpipeCore.Tools.InputSqlite,
+    "output_sqlite" => IxpipeCore.Tools.OutputSqlite,
+    "input_postgres" => IxpipeCore.Tools.InputPostgres
   }
 
   @spec lookup(term()) :: module() | nil

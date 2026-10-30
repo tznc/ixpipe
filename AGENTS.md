@@ -79,4 +79,15 @@ BAGUETTE_HOST_FEATURES=playwright MIX_ENV=prod mix release ixpipe --overwrite
 xvfb-run -a mix test --only playwright
 ```
 
+Postgres tests (`:postgres`, excluded by default) need a local server with a
+role `ixpipe` and database `ixpipe_test`; override with `IXPIPE_PG_HOST`,
+`IXPIPE_PG_PORT`, `IXPIPE_PG_DATABASE`, `IXPIPE_PG_USER`.
+
+```sh
+apt-get install -y postgresql && service postgresql start
+runuser -u postgres -- psql -c "CREATE ROLE ixpipe LOGIN PASSWORD 'ixpipe-test'"
+runuser -u postgres -- psql -c "CREATE DATABASE ixpipe_test OWNER ixpipe"
+PGPASSWORD=ixpipe-test mix test --only postgres
+```
+
 `IXPIPE_WORKFLOW` opens a workflow straight onto the canvas.
