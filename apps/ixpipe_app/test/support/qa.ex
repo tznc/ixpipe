@@ -86,6 +86,15 @@ defmodule IxpipeApp.QA do
       - {id: out, tool: output_csv, position: {x: 680, y: 190}, inputs: {in: sorted}, config: {path: #{out}}}
     """)
 
+    File.write!(Path.join(home, "split.yaml"), """
+    name: split
+    nodes:
+      - {id: orders, tool: input_csv, position: {x: 20, y: 60}, config: {path: #{@fixtures}/orders.csv}}
+      - {id: big, tool: filter, position: {x: 240, y: 60}, inputs: {in: orders}, config: {expr: "amount > 20"}}
+      - {id: large, tool: sort, position: {x: 470, y: 10}, inputs: {in: big.true}, config: {by: [amount], desc: true}}
+      - {id: small, tool: sort, position: {x: 470, y: 190}, inputs: {in: big.false}, config: {by: [amount]}}
+    """)
+
     File.write!(Path.join(home, "scratch.yaml"), "name: scratch\nnodes: []\n")
   end
 end

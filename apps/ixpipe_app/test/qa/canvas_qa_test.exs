@@ -21,7 +21,7 @@ defmodule IxpipeApp.QA.CanvasTest do
 
       QA.capture(page, "home-01-list", [
         "A 'Workflows' title, left-aligned, with a teal 'New workflow' button on the right",
-        "sales.yaml and scratch.yaml listed as rows, each with a muted relative time on the right",
+        "sales.yaml, scratch.yaml and split.yaml listed as rows, each with a muted relative time on the right",
         "Greyscale apart from the one teal button; nothing centred"
       ])
     end
@@ -97,6 +97,28 @@ defmodule IxpipeApp.QA.CanvasTest do
       QA.capture(page, "canvas-06-invalid", [
         "Under 'Join on' a red caption reads 'Required'; the input is empty",
         "Nothing else on the screen moved or changed colour"
+      ])
+    end
+  end
+
+  describe "multiple outputs" do
+    setup do
+      qa = QA.launch!(open: "split.yaml")
+      on_exit(fn -> QA.stop(qa) end)
+      qa
+    end
+
+    test "a filter's true and false outputs, wired and counted", %{page: page} do
+      Playwright.click(page, "Run workflow")
+      assert :ok = Playwright.await_text(page, "Run succeeded")
+      Playwright.click(page, "Select big")
+      Playwright.click(page, "Show false output")
+      assert :ok = Playwright.await_text(page, "big.false · 2 rows")
+
+      QA.capture(page, "canvas-07-outputs", [
+        "The big card has two connectors, true and false, and pills 'true · 2 rows', 'false · 2 rows'",
+        "Two curves leave big from different heights: true to large (above), false to small (below)",
+        "Results shows big.false with the two small orders (amount 5 and 12), the 'false' switch highlighted"
       ])
     end
   end
