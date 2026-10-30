@@ -101,6 +101,28 @@ defmodule IxpipeApp.QA.CanvasTest do
     end
   end
 
+  describe "view" do
+    setup do
+      qa = QA.launch!(open: "sales.yaml")
+      on_exit(fn -> QA.stop(qa) end)
+      qa
+    end
+
+    test "undo, zoom and pan", %{page: page} do
+      Playwright.click(page, "Remove customers")
+      Playwright.click(page, "Undo")
+      assert :ok = Playwright.await(page, role: "button", name: "Select customers")
+      Playwright.click(page, "Zoom out")
+      assert :ok = Playwright.await_text(page, "75%")
+
+      QA.capture(page, "canvas-09-view", [
+        "A floating toolbar top right: Undo, Redo (dimmed), a divider, − 75% +, Restore view",
+        "All six cards (customers restored) drawn smaller and closer, wires following them",
+        "Nothing in the panels or header moved"
+      ])
+    end
+  end
+
   describe "multiple outputs" do
     setup do
       qa = QA.launch!(open: "split.yaml")

@@ -15,6 +15,8 @@ defmodule IxpipeApp.MainView do
   @node_width 200
   @port_y 24
   @toast_ms 6_000
+  @zooms [50, 75, 100, 125, 150]
+  @history 100
   @preview_rows 50
   @palette ~w(input_csv input_excel input_parquet select filter formula sort join union
               summarize sample unique output_csv output_excel output_parquet)
@@ -38,7 +40,12 @@ defmodule IxpipeApp.MainView do
       output: nil,
       drafts: %{},
       errors: %{},
-      formula_rows: 1
+      formula_rows: 1,
+      past: [],
+      future: [],
+      last_step: nil,
+      zoom: 100,
+      pan: {0, 0}
     }
 
     case args[:path] do
@@ -101,18 +108,21 @@ defmodule IxpipeApp.MainView do
           <%!-- The surface is as large as the furthest node, so the canvas
             scrolls to every one. --%>
           <div class="absolute left-[0px] top-[0px] size-full overflow-scroll" aria-label="Canvas">
-          <div class={"relative #{surface(@spec)}"} aria-label="Canvas surface">
+          <%!-- Dragging the empty surface pans the view; nodes claim their own drags. --%>
+          <div class={"relative #{surface(@spec, @zoom, @pan)}"} aria-label="Canvas surface"
+            phx-drag="pan">
           <line :for={{from, to, out_slot, in_slot} <- edges(@spec)} curve
-            x1={from.position["x"] + node_width()} y1={from.position["y"] + port_y() + 12 * out_slot}
-            x2={to.position["x"]} y2={to.position["y"] + port_y() + 12 * in_slot}
+            x1={vx(from, @zoom, @pan) + scaled(node_width(), @zoom)}
+            y1={vy(from, @zoom, @pan) + scaled(port_y() + 12 * out_slot, @zoom)}
+            x2={vx(to, @zoom, @pan)} y2={vy(to, @zoom, @pan) + scaled(port_y() + 12 * in_slot, @zoom)}
             class="stroke-muted-foreground" />
           <div :for={node <- @spec.nodes} aria-label={node.id} phx-drag="move" phx-value-id={node.id}
-            class={"absolute left-[#{node.position["x"]}px] top-[#{node.position["y"]}px] w-[#{node_width()}px] flex-col gap-2 p-3 rounded-md border " <> card_state(node.id, @selected, @from)}>
+            class={"absolute left-[#{vx(node, @zoom, @pan)}px] top-[#{vy(node, @zoom, @pan)}px] w-[#{scaled(node_width(), @zoom)}px] flex-col gap-2 rounded-md border #{if compact?(@zoom), do: "p-2", else: "p-3"} " <> card_state(node.id, @selected, @from)}>
             <div class="flex-row flex-wrap items-center justify-between gap-2">
               <.button variant={:quiet} size={:sm} class="px-0" phx-click="select" phx-value-id={node.id}
                 aria-label={"Select #{node.id}"}><.section>{node.id}</.section></.button>
-              <.button variant={:danger} size={:sm} phx-click="remove" phx-value-id={node.id}
-                aria-label={"Remove #{node.id}"}>Remove</.button>
+              <.button :if={!compact?(@zoom)} variant={:danger} size={:sm} phx-click="remove"
+                phx-value-id={node.id} aria-label={"Remove #{node.id}"}>Remove</.button>
             </div>
             <div class="flex-row items-center gap-2">
               <.caption>{tool_label(Tools.name(node.tool))}</.caption>
@@ -124,20 +134,33 @@ defmodule IxpipeApp.MainView do
             </div>
             <%!-- Inputs and outputs on their own labelled rows: a join's left and
               right inputs are not its left and right outputs. --%>
-            <div :if={node.tool.inputs() != []} class="flex-row flex-wrap items-center gap-1">
+            <div :if={!compact?(@zoom) && node.tool.inputs() != []} class="flex-row flex-wrap items-center gap-1">
               <.caption class="w-[28px]">In</.caption>
               <.button :for={port <- node.tool.inputs()} size={:sm} phx-click="connect_to"
                 phx-value-id={node.id} phx-value-port={port} aria-label={"Connect to #{node.id} #{port}"}>
                 {port}
               </.button>
             </div>
-            <div class="flex-row flex-wrap items-center gap-1">
+            <div :if={!compact?(@zoom)} class="flex-row flex-wrap items-center gap-1">
               <.caption class="w-[28px]">Out</.caption>
               <.button :for={{out, ref, label} <- connectors(node)} size={:sm} phx-click="connect_from"
                 phx-value-from={ref} aria-label={label}>{out}</.button>
             </div>
           </div>
           </div>
+          </div>
+          <%!-- The view's tools float over the canvas, top right. --%>
+          <div class="absolute right-[16px] top-[16px] flex-row items-center gap-1 p-1 rounded-md bg-background shadow-md"
+            aria-label="View">
+            <.button size={:sm} variant={:quiet} phx-click="undo" disabled={@past == []} aria-label="Undo">Undo</.button>
+            <.button size={:sm} variant={:quiet} phx-click="redo" disabled={@future == []} aria-label="Redo">Redo</.button>
+            <div class="w-px h-[16px] bg-border" />
+            <.button size={:sm} variant={:quiet} phx-click="zoom" phx-value-by="-1"
+              disabled={@zoom == hd(zooms())} aria-label="Zoom out">−</.button>
+            <.caption class="w-[40px] text-center">{@zoom}%</.caption>
+            <.button size={:sm} variant={:quiet} phx-click="zoom" phx-value-by="1"
+              disabled={@zoom == List.last(zooms())} aria-label="Zoom in">+</.button>
+            <.button size={:sm} variant={:quiet} phx-click="reset_view" aria-label="Restore view">Restore view</.button>
           </div>
           <%!-- Over the canvas, so status never moves the layout; the opaque
             backing keeps the callout's tint from showing the canvas through. --%>
@@ -218,8 +241,41 @@ defmodule IxpipeApp.MainView do
   def handle_event("add_formula", _values, assigns),
     do: {:noreply, %{assigns | formula_rows: formula_rows(assigns) + 1}}
 
-  def handle_event("move", %{"id" => id, "dx" => dx, "dy" => dy}, assigns),
-    do: {:noreply, edit(assigns, &Edit.move_node(&1, id, round(dx), round(dy)))}
+  # Drags arrive in screen pixels; at a zoom they move the node by the
+  # canvas distance under the pointer.
+  def handle_event("move", %{"id" => id, "dx" => dx, "dy" => dy}, %{zoom: zoom} = assigns) do
+    {dx, dy} = {round(dx * 100 / zoom), round(dy * 100 / zoom)}
+    {:noreply, edit(assigns, &Edit.move_node(&1, id, dx, dy))}
+  end
+
+  def handle_event("pan", %{"dx" => dx, "dy" => dy}, %{zoom: zoom, pan: {px, py}} = assigns) do
+    {min_x, min_y} = min_position(assigns.spec)
+    # Never so far left or up that the first tool leaves the canvas.
+    x = max(px + round(dx * 100 / zoom), -min_x)
+    y = max(py + round(dy * 100 / zoom), -min_y)
+    {:noreply, %{assigns | pan: {x, y}}}
+  end
+
+  def handle_event("zoom", %{"by" => by}, assigns) do
+    i = Enum.find_index(@zooms, &(&1 == assigns.zoom)) + String.to_integer(by)
+    {:noreply, %{assigns | zoom: Enum.at(@zooms, max(0, min(i, length(@zooms) - 1)))}}
+  end
+
+  def handle_event("reset_view", _values, assigns),
+    do: {:noreply, %{assigns | zoom: 100, pan: {0, 0}}}
+
+  def handle_event("undo", _values, %{past: [previous | past]} = assigns),
+    do:
+      {:noreply,
+       restore(%{assigns | past: past, future: [assigns.spec | assigns.future]}, previous)}
+
+  def handle_event("undo", _values, assigns), do: {:noreply, assigns}
+
+  def handle_event("redo", _values, %{future: [next | future]} = assigns),
+    do:
+      {:noreply, restore(%{assigns | future: future, past: [assigns.spec | assigns.past]}, next)}
+
+  def handle_event("redo", _values, assigns), do: {:noreply, assigns}
 
   def handle_event("remove", %{"id" => id}, assigns) do
     assigns = edit(assigns, &Edit.remove_node(&1, id))
@@ -305,8 +361,49 @@ defmodule IxpipeApp.MainView do
     %{spec | nodes: nodes}
   end
 
-  defp edit(assigns, fun),
-    do: %{assigns | spec: fun.(assigns.spec), from: nil, status: nil, rows: %{}, previews: %{}}
+  # Applies an edit and records the workflow before it for undo. Edits with
+  # the same `step` in a row (typing into one setting) are one undo step.
+  defp edit(assigns, fun, step \\ nil) do
+    spec = fun.(assigns.spec)
+
+    past =
+      cond do
+        spec == assigns.spec -> assigns.past
+        step != nil and step == assigns.last_step -> assigns.past
+        true -> Enum.take([assigns.spec | assigns.past], @history)
+      end
+
+    future = if spec == assigns.spec, do: assigns.future, else: []
+
+    %{
+      assigns
+      | spec: spec,
+        past: past,
+        future: future,
+        last_step: step,
+        from: nil,
+        status: nil,
+        rows: %{},
+        previews: %{}
+    }
+  end
+
+  defp restore(assigns, spec) do
+    selected = if Enum.any?(spec.nodes, &(&1.id == assigns.selected)), do: assigns.selected
+
+    %{
+      assigns
+      | spec: spec,
+        last_step: nil,
+        from: nil,
+        status: nil,
+        rows: %{},
+        previews: %{},
+        selected: selected,
+        drafts: %{},
+        errors: %{}
+    }
+  end
 
   defp select(assigns, id),
     do: %{assigns | selected: id, output: nil, drafts: %{}, errors: %{}, formula_rows: 1}
@@ -319,7 +416,7 @@ defmodule IxpipeApp.MainView do
 
     case Edit.set_config(assigns.spec, assigns.selected, key, text) do
       {:ok, spec} ->
-        assigns = edit(assigns, fn _ -> spec end)
+        assigns = edit(assigns, fn _ -> spec end, {:config, assigns.selected, key})
         %{assigns | drafts: drafts, errors: Map.delete(assigns.errors, key)}
 
       {:error, message} ->
@@ -384,14 +481,29 @@ defmodule IxpipeApp.MainView do
     end
   end
 
-  defp surface(spec) do
+  # The surface covers the furthest tool at the current zoom and pan.
+  defp surface(spec, zoom, {px, py}) do
     {w, h} =
       Enum.reduce(spec.nodes, {0, 0}, fn %{position: %{"x" => x, "y" => y}}, {w, h} ->
-        {max(w, x + @node_width + 40), max(h, y + 160)}
+        {max(w, x + px + @node_width + 40), max(h, y + py + 160)}
       end)
 
-    "w-[#{w}px] h-[#{h}px]"
+    "w-[#{scaled(w, zoom)}px] h-[#{scaled(h, zoom)}px]"
   end
+
+  defp min_position(%{nodes: []}), do: {0, 0}
+
+  defp min_position(spec) do
+    {Enum.min(Enum.map(spec.nodes, & &1.position["x"])),
+     Enum.min(Enum.map(spec.nodes, & &1.position["y"]))}
+  end
+
+  # Where a tool shows: its canvas position, panned, at the zoom.
+  defp vx(node, zoom, {px, _}), do: scaled(node.position["x"] + px, zoom)
+  defp vy(node, zoom, {_, py}), do: scaled(node.position["y"] + py, zoom)
+  defp scaled(length, zoom), do: round(length * zoom / 100)
+  defp compact?(zoom), do: zoom < 75
+  defp zooms, do: @zooms
 
   defp card_state(id, selected, from) do
     cond do
