@@ -136,6 +136,8 @@ defmodule IxpipeCore.Connections do
   defp blank?(value), do: value in [nil, ""]
 
   @doc false
+  def join([word], _conjunction), do: word
+
   def join(words, conjunction) do
     {init, [last]} = Enum.split(words, -1)
     Enum.join(init, ", ") <> " #{conjunction} " <> last
