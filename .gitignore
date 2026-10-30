@@ -22,3 +22,5 @@ erl_crash.dump
 
 # Agent worktrees
 /.claude/worktrees/
+/apps/ixpipe_core/priv/native/
+/apps/ixpipe_core/native/*/target/

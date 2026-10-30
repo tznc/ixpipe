@@ -4,7 +4,6 @@ defmodule IxpipeApp.DatabasesTest do
   # workflows folder.
   use ExUnit.Case, async: false
   alias Baguette.Test
-  alias Exqlite.Sqlite3
   alias IxpipeCore.Connections
 
   setup do
@@ -13,15 +12,12 @@ defmodule IxpipeApp.DatabasesTest do
     on_exit(fn -> File.rm_rf!(dir) end)
 
     db = Path.join(dir, "shop.db")
-    {:ok, conn} = Sqlite3.open(db)
 
     :ok =
-      Sqlite3.execute(
-        conn,
+      IxpipeCore.Sqlite.execute(
+        db,
         "CREATE TABLE orders (id INTEGER, amount REAL); INSERT INTO orders VALUES (1, 50.5), (2, 5.0);"
       )
-
-    :ok = Sqlite3.close(conn)
 
     File.write!(Path.join(dir, "flow.yaml"), "name: flow\nnodes: []\n")
     %{dir: dir, db: db, w: System.unique_integer([:positive])}

@@ -32,7 +32,7 @@ defmodule IxpipeCore.MixProject do
       {:jason, "~> 1.4"},
       {:xlsx_reader, "~> 0.8.12"},
       {:elixlsx, "~> 0.6.0"},
-      {:exqlite, "~> 0.43"},
+      {:rustler, "~> 0.38"},
       {:postgrex, "~> 0.22"}
     ]
   end

@@ -6,8 +6,7 @@ defmodule IxpipeCore.Tools.InputSqlite do
   """
   @behaviour IxpipeCore.Tool
 
-  alias Exqlite.Sqlite3
-  alias IxpipeCore.Database
+  alias IxpipeCore.{Database, Sqlite}
 
   @impl true
   def inputs, do: []
@@ -49,13 +48,10 @@ defmodule IxpipeCore.Tools.InputSqlite do
   @impl true
   def run(_inputs, config) do
     sql = Database.sql!(config)
-    {:ok, conn} = Sqlite3.open(path!(config), mode: :readonly)
 
-    try do
-      {columns, rows} = query!(conn, sql)
-      Database.frame(columns, rows)
-    after
-      Sqlite3.close(conn)
+    case Sqlite.query(path!(config), sql) do
+      {:ok, {columns, rows}} -> Database.frame(columns, rows)
+      {:error, reason} -> raise "SQLite: #{reason}"
     end
   end
 
@@ -65,17 +61,6 @@ defmodule IxpipeCore.Tools.InputSqlite do
       {%{"path" => path}, _} -> path
       {nil, path} when is_binary(path) and path != "" -> path
       {nil, _} -> raise "Choose a saved connection or a database file"
-    end
-  end
-
-  defp query!(conn, sql) do
-    with {:ok, statement} <- Sqlite3.prepare(conn, sql),
-         {:ok, columns} <- Sqlite3.columns(conn, statement),
-         {:ok, rows} <- Sqlite3.fetch_all(conn, statement) do
-      Sqlite3.release(conn, statement)
-      {columns, rows}
-    else
-      {:error, reason} -> raise "SQLite: #{reason}"
     end
   end
 end

@@ -7,8 +7,7 @@ defmodule IxpipeCore.Tools.OutputSqlite do
   @behaviour IxpipeCore.Tool
 
   alias Explorer.DataFrame
-  alias Exqlite.Sqlite3
-  alias IxpipeCore.Database
+  alias IxpipeCore.{Database, Sqlite}
   alias IxpipeCore.Tools.InputSqlite
 
   @impl true
@@ -46,50 +45,38 @@ defmodule IxpipeCore.Tools.OutputSqlite do
 
   @impl true
   def run(%{"in" => df}, %{"table" => table} = config) do
-    {:ok, conn} = Sqlite3.open(InputSqlite.path!(config))
     name = Database.quote_name(table)
-
-    try do
-      exec!(conn, "BEGIN")
-
-      if (config["mode"] || "replace") == "replace",
-        do: exec!(conn, "DROP TABLE IF EXISTS #{name}")
-
-      # In the frame's column order, which the inserts follow; dtypes/1 is a map.
-      dtypes = DataFrame.dtypes(df)
-
-      columns =
-        Enum.map_join(DataFrame.names(df), ", ", fn col ->
-          "#{Database.quote_name(col)} #{sql_type(dtypes[col])}"
-        end)
-
-      exec!(conn, "CREATE TABLE IF NOT EXISTS #{name} (#{columns})")
-      insert!(conn, name, df)
-      exec!(conn, "COMMIT")
-    rescue
-      e ->
-        Sqlite3.execute(conn, "ROLLBACK")
-        reraise e, __STACKTRACE__
-    after
-      Sqlite3.close(conn)
-    end
-
-    df
-  end
-
-  defp insert!(conn, name, df) do
     names = DataFrame.names(df)
+    # In the frame's column order, which the inserts follow; dtypes/1 is a map.
+    dtypes = DataFrame.dtypes(df)
+
+    columns =
+      Enum.map_join(names, ", ", fn col ->
+        "#{Database.quote_name(col)} #{sql_type(dtypes[col])}"
+      end)
+
+    drop =
+      if (config["mode"] || "replace") == "replace",
+        do: ["DROP TABLE IF EXISTS #{name}"],
+        else: []
+
     marks = Enum.map_join(names, ", ", fn _ -> "?" end)
-    {:ok, statement} = Sqlite3.prepare(conn, "INSERT INTO #{name} VALUES (#{marks})")
-    columns = DataFrame.to_columns(df)
+    data = DataFrame.to_columns(df)
 
-    for row <- Enum.zip(Enum.map(names, &columns[&1])) do
-      :ok = Sqlite3.bind(statement, row |> Tuple.to_list() |> Enum.map(&param/1))
-      :done = Sqlite3.step(conn, statement)
-      :ok = Sqlite3.reset(statement)
+    rows =
+      names
+      |> Enum.map(&data[&1])
+      |> Enum.zip_with(fn row -> Enum.map(row, &param/1) end)
+
+    case Sqlite.write(
+           InputSqlite.path!(config),
+           drop ++ ["CREATE TABLE IF NOT EXISTS #{name} (#{columns})"],
+           "INSERT INTO #{name} VALUES (#{marks})",
+           rows
+         ) do
+      :ok -> df
+      {:error, reason} -> raise "SQLite: #{reason}"
     end
-
-    Sqlite3.release(conn, statement)
   end
 
   defp param(true), do: 1
@@ -102,11 +89,4 @@ defmodule IxpipeCore.Tools.OutputSqlite do
   defp sql_type({:f, _}), do: "REAL"
   defp sql_type(:boolean), do: "INTEGER"
   defp sql_type(_), do: "TEXT"
-
-  defp exec!(conn, sql) do
-    case Sqlite3.execute(conn, sql) do
-      :ok -> :ok
-      {:error, reason} -> raise "SQLite: #{reason}"
-    end
-  end
 end

@@ -1,7 +1,6 @@
 defmodule IxpipeCore.SqliteTest do
   use ExUnit.Case, async: true
   alias Explorer.DataFrame, as: DF
-  alias Exqlite.Sqlite3
   alias IxpipeCore.Connections
   alias IxpipeCore.Tools.{InputSqlite, OutputSqlite}
 
@@ -11,15 +10,15 @@ defmodule IxpipeCore.SqliteTest do
     on_exit(fn -> File.rm_rf!(dir) end)
     db = Path.join(dir, "shop.db")
 
-    {:ok, conn} = Sqlite3.open(db)
-
     :ok =
-      Sqlite3.execute(conn, """
-      CREATE TABLE orders (id INTEGER, amount REAL, customer TEXT, note TEXT);
-      INSERT INTO orders VALUES (1, 50.5, 'Ada', NULL), (2, 5.0, 'Bob', 'rush'), (3, 30.25, 'Ada', NULL);
-      """)
+      IxpipeCore.Sqlite.execute(
+        db,
+        """
+        CREATE TABLE orders (id INTEGER, amount REAL, customer TEXT, note TEXT);
+        INSERT INTO orders VALUES (1, 50.5, 'Ada', NULL), (2, 5.0, 'Bob', 'rush'), (3, 30.25, 'Ada', NULL);
+        """
+      )
 
-    :ok = Sqlite3.close(conn)
     %{dir: dir, db: db}
   end
 
