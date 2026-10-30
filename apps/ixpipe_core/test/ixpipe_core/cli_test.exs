@@ -38,7 +38,7 @@ defmodule IxpipeCore.CLITest do
 
     assert code == 0
     assert out =~ ~r/orders\s+input_csv\s+4 rows/
-    assert out =~ ~r/big\s+filter\s+3 rows/
+    assert out =~ ~r/big\s+filter\s+true 3 rows, false 1 row/
     assert out =~ ~r/Run succeeded in \d+ ms/
     # Relative paths resolve against the workflow's directory.
     assert File.read!(Path.join(dir, "big.csv")) =~ "amount"
@@ -98,5 +98,21 @@ defmodule IxpipeCore.CLITest do
     assert {2, _} = cli([])
     assert {0, out} = cli(["help"])
     assert out =~ "ixpipe run"
+  end
+
+  test "a tool with several outputs reports each", %{dir: dir} do
+    path =
+      workflow(dir, """
+      nodes:
+        - {id: orders, tool: input_csv, config: {path: orders.csv}}
+        - {id: big, tool: filter, inputs: {in: orders}, config: {expr: "amount > 20"}}
+      """)
+
+    assert {0, out} = cli(["run", path])
+    assert out =~ ~r/big\s+filter\s+true 2 rows, false 2 rows/
+
+    assert {0, json} = cli(["run", path, "--json"])
+    big = Enum.find(Jason.decode!(json)["nodes"], &(&1["id"] == "big"))
+    assert big["outputs"] == %{"true" => 2, "false" => 2}
   end
 end

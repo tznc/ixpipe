@@ -100,24 +100,37 @@ defmodule IxpipeCore.CLI do
   end
 
   defp report({:ok, spec, results}, ms, json, io) do
+    # A tool with one output reports its rows; one with several reports each
+    # output's rows (results are keyed `node.output` for those).
     nodes =
-      for node <- spec.nodes,
-          do: %{
-            "id" => node.id,
-            "tool" => Tools.name(node.tool),
-            "rows" => DataFrame.n_rows(results[node.id])
-          }
+      for node <- spec.nodes do
+        base = %{"id" => node.id, "tool" => Tools.name(node.tool)}
+
+        case Tools.outputs(node.tool) do
+          [_] ->
+            Map.put(base, "rows", DataFrame.n_rows(results[node.id]))
+
+          outputs ->
+            counts = Map.new(outputs, &{&1, DataFrame.n_rows(results["#{node.id}.#{&1}"])})
+
+            base
+            |> Map.put("rows", nil)
+            |> Map.put("outputs", counts)
+            |> Map.put("order", outputs)
+        end
+      end
 
     if json do
+      nodes = Enum.map(nodes, &Map.delete(&1, "order"))
       IO.puts(io, Jason.encode!(%{status: "ok", error: nil, ms: ms, nodes: nodes}))
     else
       id_width = nodes |> Enum.map(&String.length(&1["id"])) |> Enum.max(fn -> 0 end)
       tool_width = nodes |> Enum.map(&String.length(&1["tool"])) |> Enum.max(fn -> 0 end)
 
-      for %{"id" => id, "tool" => tool, "rows" => rows} <- nodes do
+      for %{"id" => id, "tool" => tool} = node <- nodes do
         IO.puts(
           io,
-          "#{String.pad_trailing(id, id_width)}  #{String.pad_trailing(tool, tool_width)}  #{plural(rows, "row")}"
+          "#{String.pad_trailing(id, id_width)}  #{String.pad_trailing(tool, tool_width)}  #{counts(node)}"
         )
       end
 
@@ -154,4 +167,9 @@ defmodule IxpipeCore.CLI do
 
   defp plural(1, noun), do: "1 #{noun}"
   defp plural(n, noun), do: "#{n} #{noun}s"
+
+  defp counts(%{"outputs" => counts, "order" => order}),
+    do: Enum.map_join(order, ", ", &"#{&1} #{plural(counts[&1], "row")}")
+
+  defp counts(%{"rows" => rows}), do: plural(rows, "row")
 end
