@@ -18,3 +18,6 @@ import Config
 #       format: "$date $time [$level] $metadata$message\n",
 #       metadata: [:user_id]
 #
+
+# The main window opens at startup; tests start their own views instead.
+config :ixpipe_app, main_window: config_env() != :test

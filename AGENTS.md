@@ -7,10 +7,11 @@ desktop and mobile app in Elixir, rendered by GPUI through
 ## Layout (umbrella)
 
 - `apps/ixpipe_core`: the engine, pure Elixir with no UI dependency.
-  - `IxpipeCore.Spec` parses and validates YAML workflows (ids, tools, ports, cycles).
+  - `IxpipeCore.Spec` parses YAML workflows: `decode/1` (drafts), `validate/1` (runnable DAG), `to_yaml/1`.
+  - `IxpipeCore.Edit` applies canvas edits (add, move, connect, remove) to drafts.
   - `IxpipeCore.run/1` compiles a spec to a [Runic](https://hex.pm/packages/runic) workflow and runs it.
   - Tools (`IxpipeCore.Tools.*`) implement `IxpipeCore.Tool` over `Explorer.DataFrame`; register new ones in `IxpipeCore.Tools`.
-- `apps/ixpipe_app`: the Baguette UI (`Baguette.View` screens).
+- `apps/ixpipe_app`: the Baguette UI. `IxpipeApp.MainView` is the main window: home (workflows in `IXPIPE_HOME`, default `~/ixpipe`) and the canvas. `IxpipeApp.Theme` holds the colour tokens; every colour class must resolve to one (tested).
   - Rust is only for platform NIFs.
 
 ## Rules
@@ -44,4 +45,4 @@ BAGUETTE_HOST_FEATURES=playwright MIX_ENV=prod mix release ixpipe --overwrite
 xvfb-run -a mix test --only playwright
 ```
 
-The app shows the workflow at `IXPIPE_WORKFLOW` (until there is an open-file screen).
+`IXPIPE_WORKFLOW` opens a workflow straight onto the canvas.

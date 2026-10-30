@@ -28,7 +28,8 @@ defmodule IxpipeCore.MixProject do
     [
       {:runic, "~> 0.1.0-alpha.13"},
       {:explorer, "~> 0.11"},
-      {:yaml_elixir, "~> 2.11"}
+      {:yaml_elixir, "~> 2.11"},
+      {:jason, "~> 1.4"}
     ]
   end
 end

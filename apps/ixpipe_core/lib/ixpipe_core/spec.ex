@@ -13,18 +13,23 @@ defmodule IxpipeCore.Spec do
           config: {by: [amount]}
 
   Each node names a tool, maps the tool's input ports to upstream node ids and
-  carries the tool's config. Nodes are returned in topological order.
+  carries the tool's config and, optionally, its canvas `position`.
+
+  `parse/1` is `decode/1` (structure: YAML, tools, ids) then `validate/1` (a
+  runnable DAG: ports, inputs, no cycles, nodes in topological order). An
+  editor holds decoded drafts and validates before running.
   """
 
   defmodule Node do
     @moduledoc "One tool instance in a workflow."
-    defstruct [:id, :tool, inputs: %{}, config: %{}]
+    defstruct [:id, :tool, inputs: %{}, config: %{}, position: nil]
 
     @type t :: %__MODULE__{
             id: String.t(),
             tool: module(),
             inputs: %{String.t() => String.t()},
-            config: map()
+            config: map(),
+            position: %{String.t() => number()} | nil
           }
   end
 
@@ -34,13 +39,63 @@ defmodule IxpipeCore.Spec do
 
   @spec parse(String.t()) :: {:ok, t()} | {:error, term()}
   def parse(yaml) do
-    with {:ok, doc} <- decode(yaml),
-         {:ok, nodes} <- build_nodes(Map.get(doc, "nodes", [])),
-         :ok <- check_inputs(nodes),
-         {:ok, sorted} <- topo_sort(nodes) do
-      {:ok, %__MODULE__{name: doc["name"], nodes: sorted}}
+    with {:ok, spec} <- decode(yaml), do: validate(spec)
+  end
+
+  @doc "Parses a workflow without checking it is a runnable DAG."
+  @spec decode(String.t()) :: {:ok, t()} | {:error, term()}
+  def decode(yaml) do
+    with {:ok, doc} <- read_yaml(yaml),
+         {:ok, nodes} <- build_nodes(Map.get(doc, "nodes") || []) do
+      {:ok, %__MODULE__{name: doc["name"], nodes: nodes}}
     end
   end
+
+  @doc "Checks `spec` is a runnable DAG and puts its nodes in topological order."
+  @spec validate(t()) :: {:ok, t()} | {:error, term()}
+  def validate(%__MODULE__{nodes: nodes} = spec) do
+    with :ok <- check_inputs(nodes),
+         {:ok, sorted} <- topo_sort(nodes) do
+      {:ok, %{spec | nodes: sorted}}
+    end
+  end
+
+  @doc "The workflow as YAML that `decode/1` reads back unchanged."
+  @spec to_yaml(t()) :: String.t()
+  def to_yaml(%__MODULE__{} = spec) do
+    name = if spec.name, do: ["name: ", flow(spec.name), "\n"], else: []
+
+    nodes =
+      for node <- spec.nodes do
+        fields =
+          [
+            {"id", node.id},
+            {"tool", IxpipeCore.Tools.name(node.tool)},
+            {"position", node.position},
+            {"inputs", if(node.inputs != %{}, do: node.inputs)},
+            {"config", if(node.config != %{}, do: node.config)}
+          ]
+          |> Enum.reject(fn {_, value} -> is_nil(value) end)
+          |> Enum.map(fn {key, value} -> [key, ": ", flow(value)] end)
+
+        ["  - ", Enum.intersperse(fields, "\n    "), "\n"]
+      end
+
+    IO.iodata_to_binary([name, "nodes:", if(nodes == [], do: " []\n", else: ["\n", nodes])])
+  end
+
+  # Flow-style YAML. Strings are JSON-quoted, which YAML reads verbatim.
+  defp flow(map) when is_map(map) do
+    pairs = map |> Enum.sort() |> Enum.map(fn {k, v} -> [flow(to_string(k)), ": ", flow(v)] end)
+    ["{", Enum.intersperse(pairs, ", "), "}"]
+  end
+
+  defp flow(list) when is_list(list),
+    do: ["[", Enum.intersperse(Enum.map(list, &flow/1), ", "), "]"]
+
+  defp flow(nil), do: "null"
+  defp flow(value) when is_binary(value), do: Jason.encode!(value)
+  defp flow(value), do: to_string(value)
 
   @doc "A one-line, human-readable description of a `parse/1` error."
   @spec format_error(term()) :: String.t()
@@ -53,7 +108,7 @@ defmodule IxpipeCore.Spec do
   def format_error({:bad_ports, id, expected: expected, got: got}),
     do: "#{id}: expects inputs [#{Enum.join(expected, ", ")}], got [#{Enum.join(got, ", ")}]"
 
-  defp decode(yaml) do
+  defp read_yaml(yaml) do
     case YamlElixir.read_from_string(yaml) do
       {:ok, doc} when is_map(doc) -> {:ok, doc}
       {:ok, other} -> {:error, {:invalid_yaml, other}}
@@ -71,7 +126,15 @@ defmodule IxpipeCore.Spec do
 
         tool = IxpipeCore.Tools.lookup(node["tool"]) ->
           inputs = Map.new(node["inputs"] || %{}, fn {k, v} -> {to_string(k), to_string(v)} end)
-          node = %Node{id: id, tool: tool, inputs: inputs, config: node["config"] || %{}}
+
+          node = %Node{
+            id: id,
+            tool: tool,
+            inputs: inputs,
+            config: node["config"] || %{},
+            position: node["position"]
+          }
+
           {:cont, {:ok, [node | acc]}}
 
         true ->

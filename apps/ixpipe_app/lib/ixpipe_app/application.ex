@@ -5,14 +5,20 @@ defmodule IxpipeApp.Application do
 
   @impl true
   def start(_type, _args) do
-    # Until there is an open-file screen, the main window shows the workflow
-    # at IXPIPE_WORKFLOW.
     children =
-      case System.get_env("IXPIPE_WORKFLOW") do
-        nil -> []
-        path -> [{IxpipeApp.WorkflowView, window: 0, args: [path: path]}]
+      if Application.get_env(:ixpipe_app, :main_window, true) do
+        [{IxpipeApp.MainView, window: 0, theme: IxpipeApp.Theme, args: main_args()}]
+      else
+        []
       end
 
     Supervisor.start_link(children, strategy: :one_for_one, name: IxpipeApp.Supervisor)
+  end
+
+  # IXPIPE_HOME holds the workflows (default ~/ixpipe); IXPIPE_WORKFLOW opens
+  # one at startup.
+  defp main_args do
+    dir = System.get_env("IXPIPE_HOME") || Path.expand("~/ixpipe")
+    [dir: dir] ++ if(path = System.get_env("IXPIPE_WORKFLOW"), do: [path: path], else: [])
   end
 end
