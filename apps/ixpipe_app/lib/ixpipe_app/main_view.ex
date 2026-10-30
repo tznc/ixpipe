@@ -702,7 +702,7 @@ defmodule IxpipeApp.MainView do
       <.caption :if={!@node}>Select a tool to see its results.</.caption>
       <.caption :if={@node && !@preview && !@failure}>Run the workflow to see this tool's results.</.caption>
       <div :if={@failure} class="flex-col flex-1 overflow-scroll" aria-label="Error details">
-        <.body :for={line <- String.split(@failure, "\n")} class="font-mono">{line}</.body>
+        <.body :for={line <- String.split(@failure, "\n")} class="font-mono">{indented(line)}</.body>
       </div>
       <div :if={@preview} class="flex-col flex-1 overflow-scroll">
         <table class="flex-col">
@@ -935,6 +935,10 @@ defmodule IxpipeApp.MainView do
     <.caption :if={match?({:ok, _}, @found)}>Runs with {elem(@found, 1)}</.caption>
     """
   end
+
+  # Leading spaces as no-break spaces, so a traceback keeps its indentation.
+  defp indented(line),
+    do: String.replace(line, ~r/^ +/, &String.duplicate("\u00A0", byte_size(&1)))
 
   # The failed run's message, for its node's Results.
   defp failure({id, message}, %{id: id}), do: message

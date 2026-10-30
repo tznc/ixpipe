@@ -16,7 +16,7 @@ defmodule IxpipeApp.QA.CodeTest do
   end
 
   defp python(page, lines) do
-    Playwright.click(page, "Code tab")
+    Playwright.click(page, role: "tab", name: "Code tab")
     Playwright.click(page, "Add python")
     Playwright.click(page, "Connect from orders")
     Playwright.click(page, "Connect to python_1 in")
@@ -74,7 +74,7 @@ defmodule IxpipeApp.QA.CodeTest do
   end
 
   test "Script names the runtime it will use, or what's missing", %{page: page} do
-    Playwright.click(page, "Code tab")
+    Playwright.click(page, role: "tab", name: "Code tab")
     Playwright.click(page, "Add script")
     assert :ok = Playwright.await(page, role: "textbox", name: "Interpreter")
     Playwright.fill(page, "Interpreter", "/nowhere/python3")
