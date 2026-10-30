@@ -159,7 +159,8 @@ defmodule IxpipeApp.MainView do
           </.ribbon_group>
         <% end %>
       </.ribbon>
-      <div class={"relative flex-1 " <> if(@phone, do: "flex-col", else: "flex-row")}>
+      <%!-- min-h-0: a long properties panel scrolls instead of pushing Results off the window. --%>
+      <div class={"relative flex-1 min-h-0 " <> if(@phone, do: "flex-col", else: "flex-row")}>
         <div :if={!@phone || @pane == "canvas"} class="flex-col flex-1">
         <div class="relative flex-1 overflow-hidden bg-canvas">
           <.empty_state :if={@spec.nodes == []} title="This workflow is empty">
