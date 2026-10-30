@@ -2,7 +2,7 @@
 //! returns the result as an Arrow IPC stream, which Explorer loads without
 //! converting rows to Elixir terms.
 
-use duckdb::arrow::ipc::writer::StreamWriter;
+use arrow_ipc::writer::StreamWriter;
 use duckdb::Connection;
 use rustler::{Encoder, Env, OwnedBinary, Term};
 

@@ -12,3 +12,5 @@ rustler = "0.38"
 # DuckDB v2.0.0 compiled from source, so every target builds the same engine.
 # duckdb-rs encodes the DuckDB version as 1.MAJOR_MINOR_PATCH; ~ keeps it on v2.0.0.
 duckdb = { version = "~1.20000.1", features = ["bundled"] }
+# Arrow IPC, at duckdb's Arrow version, to hand results to Explorer.
+arrow-ipc = "=60.1.0"
