@@ -1,7 +1,9 @@
 name: Android
 
 # ixpipe as an x86_64 APK, booted on an API 34 emulator and smoke-tested
-# (scripts/android-smoke.sh). Modelled on baguette's android.yml.
+# (scripts/android-smoke.sh), and as an arm64-v8a APK for phones (built and
+# uploaded only: GitHub's runners cannot emulate arm64 at speed). Modelled
+# on baguette's android.yml.
 #
 # Release.android/1 (baguette) cross-builds every dependency NIF for the ABI:
 # Explorer's Polars crate and ixpipe_sqlite. Explorer takes a while, so its
@@ -28,7 +30,20 @@ env:
   LANG: C.UTF-8
 
 jobs:
-  emulator:
+  apk:
+    name: APK (${{ matrix.abi }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - abi: x86_64
+            triple: x86_64-linux-android
+            jni: x86_64
+            emulator: true
+          - abi: arm64
+            triple: aarch64-linux-android
+            jni: arm64-v8a
+            emulator: false
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
@@ -44,7 +59,7 @@ jobs:
           elixir-version: ${{ env.ELIXIR_VERSION }}
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-linux-android
+          targets: ${{ matrix.triple }}
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -63,19 +78,19 @@ jobs:
       - uses: actions/cache/restore@v4
         id: liberlang
         with:
-          path: ~/liberlang-android/x86_64-linux-android
-          key: liberlang-android-x86_64-${{ env.OTP_TAG }}-${{ env.NDK_VERSION }}-${{ hashFiles('deps/baguette/scripts/build-liberlang-android.sh') }}
+          path: ~/liberlang-android/${{ matrix.triple }}
+          key: liberlang-android-${{ matrix.abi }}-${{ env.OTP_TAG }}-${{ env.NDK_VERSION }}-${{ hashFiles('deps/baguette/scripts/build-liberlang-android.sh') }}
       - name: Cross-build OTP for Android (baguette's script)
         if: steps.liberlang.outputs.cache-hit != 'true'
         run: |
-          deps/baguette/scripts/build-liberlang-android.sh "$OTP_TAG" x86_64 ~/liberlang-build
-          mkdir -p ~/liberlang-android/x86_64-linux-android
-          cp ~/liberlang-build/{liberlang.so,erl_child_setup,inet_gethost} ~/liberlang-android/x86_64-linux-android/
+          deps/baguette/scripts/build-liberlang-android.sh "$OTP_TAG" ${{ matrix.abi }} ~/liberlang-build
+          mkdir -p ~/liberlang-android/${{ matrix.triple }}
+          cp ~/liberlang-build/{liberlang.so,erl_child_setup,inet_gethost} ~/liberlang-android/${{ matrix.triple }}/
           rm -rf ~/liberlang-build
       - uses: actions/cache/save@v4
         if: steps.liberlang.outputs.cache-hit != 'true'
         with:
-          path: ~/liberlang-android/x86_64-linux-android
+          path: ~/liberlang-android/${{ matrix.triple }}
           key: ${{ steps.liberlang.outputs.cache-primary-key }}
       - uses: actions/cache@v4
         with:
@@ -83,25 +98,32 @@ jobs:
             deps/baguette/native/target
             ~/.cargo/registry
             ~/.cargo/git
-          key: cargo-android-x86_64-${{ hashFiles('mix.lock') }}
+          key: cargo-android-${{ matrix.abi }}-${{ hashFiles('mix.lock') }}
       # The dependency NIFs built for Android, by app version (Explorer's
-      # Polars build is the slow one).
+      # Polars build is the slow one). Bump the version when the names the
+      # NIFs ship under change, so a stale cache is not saved over.
       - uses: actions/cache/restore@v4
         id: nifs
         with:
-          path: _build/prod/android/nifs/x86_64-linux-android
-          key: android-nifs-x86_64-${{ hashFiles('mix.lock', 'apps/ixpipe_core/native/**') }}
+          path: _build/prod/android/nifs/${{ matrix.triple }}
+          key: android-nifs-v2-${{ matrix.abi }}-${{ hashFiles('mix.lock', 'apps/ixpipe_core/native/**') }}
       - name: Build the APK
         env:
-          BAGUETTE_ANDROID: x86_64
+          BAGUETTE_ANDROID: ${{ matrix.abi }}
           MIX_ENV: prod
         run: |
           export BAGUETTE_LIBERLANG=$HOME/liberlang-android
           mix release ixpipe --overwrite
-          cp _build/prod/android/ixpipe.apk "$RUNNER_TEMP/ixpipe.apk"
-          unzip -l "$RUNNER_TEMP/ixpipe.apk" | grep -E '\.so$'
+          apk=$RUNNER_TEMP/ixpipe-${{ matrix.abi }}.apk
+          cp _build/prod/android/ixpipe.apk "$apk"
+          unzip -l "$apk" | grep -E '\.so$'
+          # Each NIF ships under its library's own name, for this ABI only.
+          unzip -l "$apk" | grep -q "lib/${{ matrix.jni }}/libexplorer.so"
+          if unzip -l "$apk" | grep -E 'liblib|unknown-linux-gnu'; then
+            echo "::error::a NIF ships under the build machine's file name"; exit 1
+          fi
           # What each shipped library links: Android must find all of it.
-          for so in deps/baguette/native/baguette_host/gen/android/app/src/main/jniLibs/x86_64/*.so; do
+          for so in deps/baguette/native/baguette_host/gen/android/app/src/main/jniLibs/${{ matrix.jni }}/*.so; do
             echo "$so:"; "$NDK_HOME"/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf -d "$so" | grep NEEDED || true
           done
           rm -rf _build/prod/android/nifs/target
@@ -110,18 +132,20 @@ jobs:
       - uses: actions/cache/save@v4
         if: always() && steps.nifs.outputs.cache-hit != 'true'
         with:
-          path: _build/prod/android/nifs/x86_64-linux-android
+          path: _build/prod/android/nifs/${{ matrix.triple }}
           key: ${{ steps.nifs.outputs.cache-primary-key }}
       - uses: actions/upload-artifact@v4
         with:
-          name: ixpipe-apk
-          path: ${{ runner.temp }}/ixpipe.apk
+          name: ixpipe-${{ matrix.abi }}-apk
+          path: ${{ runner.temp }}/ixpipe-${{ matrix.abi }}.apk
       - name: Enable KVM
+        if: matrix.emulator
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       - name: Smoke test on the emulator
+        if: matrix.emulator
         timeout-minutes: 25
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -131,9 +155,10 @@ jobs:
           # 800x1280 at density 1: the canvas header is wider than the default 320 px.
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -skin 800x1280
           disable-animations: true
-          script: scripts/android-smoke.sh ${{ runner.temp }}/ixpipe.apk android-smoke
+          script: scripts/android-smoke.sh ${{ runner.temp }}/ixpipe-${{ matrix.abi }}.apk android-smoke
+      # Screenshots (home, canvas, run, scrolled, final) and logcat.
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && matrix.emulator
         with:
           name: android-smoke
           path: android-smoke

@@ -3,8 +3,10 @@
 # there: the embedded BEAM boots and renders, the canvas opens, and a
 # workflow that reads a CSV, sorts it and writes it to CSV (Explorer) and
 # SQLite (ixpipe_sqlite) runs from the Run workflow button and leaves the
-# right files behind. Fails if any NIF is missing from the APK. Saves
-# screenshots and logcat to the output directory.
+# right files behind; a swipe scrolls the canvas. Fails if any NIF is missing
+# from the APK, or the host reports an unknown icon or an unsupported class.
+# Saves screenshots (home, canvas, run, scrolled) and logcat to the output
+# directory.
 # Modelled on baguette's scripts/android-smoke.sh.
 #
 #   scripts/android-smoke.sh ixpipe.apk [OUT_DIR]
@@ -126,6 +128,25 @@ YAML
     done
     sleep 2
     shot run
+
+    # A horizontal swipe across the canvas scrolls it: the nodes' controls
+    # report new bounds. (A pan locks to its first axis, so keep it level.)
+    at=$(grep -Eo "baguette: bounds Select sorted [0-9]+ [0-9]+" "$OUT/logcat.txt" | tail -1 | grep -Eo '[0-9]+ [0-9]+$' || true)
+    if [[ -z $at ]]; then
+      fail "no bounds logged for Select sorted"
+    else
+      read -r x y <<<"$at"
+      before=$(grep -Eo "baguette: bounds Select to_csv [0-9]+ [0-9]+" "$OUT/logcat.txt" | tail -1 || true)
+      from=$(lines)
+      adb shell input swipe "$x" "$((y + 60))" "$((x - 240))" "$((y + 60))" 600
+      sleep 3
+      after=$(tail -n +$((from + 1)) "$OUT/logcat.txt" | grep -Eo "baguette: bounds Select to_csv [0-9]+ [0-9]+" | tail -1 || true)
+      echo "before swipe: ${before:-none}; after: ${after:-none}"
+      if [[ -z $after || $after == "$before" ]]; then
+        fail "a swipe did not scroll the canvas"
+      fi
+      shot scrolled
+    fi
     csv=$(as_app "cat $home/sorted.csv" 2>/dev/null | tr -d '\r' || true)
     echo "sorted.csv:"
     echo "$csv"
@@ -134,6 +155,11 @@ YAML
     magic=$(as_app "head -c 15 $home/sorted.sqlite" 2>/dev/null || true)
     [[ $magic == "SQLite format 3" ]] || fail "the workflow wrote no SQLite database"
   fi
+fi
+
+# Icons and classes that render on the desktop render here too.
+if grep -E 'baguette: (unknown icon|unsupported class)' "$OUT/logcat.txt"; then
+  fail "the host could not draw an icon or class it draws on the desktop"
 fi
 
 if adb shell pidof "$PKG" >/dev/null; then echo "app still running"; else
