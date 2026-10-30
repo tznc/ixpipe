@@ -187,6 +187,8 @@ defmodule IxpipeApp.MainView do
           </div>
           </div>
           </div>
+          <%!-- Top right of the canvas, clear of the header's buttons. --%>
+          <.toast :if={@toast} message={@toast} />
           <%!-- Over the canvas, so status never moves the layout; the opaque
             backing keeps the callout's tint from showing the canvas through. --%>
           <div :if={@status} class="absolute left-[16px] bottom-[16px] w-[420px] rounded-md bg-background shadow-md">
@@ -201,7 +203,6 @@ defmodule IxpipeApp.MainView do
         <.properties node={@node} drafts={@drafts} errors={@errors} formula_rows={@formula_rows}
           dir={@dir} />
       </div>
-      <.toast :if={@toast} message={@toast} />
     </div>
     """
   end
