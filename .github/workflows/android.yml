@@ -6,12 +6,13 @@ name: Android
 # on baguette's android.yml.
 #
 # Release.android/1 (baguette) cross-builds every dependency NIF for the ABI:
-# Explorer's Polars crate and ixpipe_sqlite. Explorer takes a while, so its
-# build is kept in _build/prod/android/nifs, cached by mix.lock.
+# ixpipe_duckdb (DuckDB, bundled C++) and ixpipe_sqlite. DuckDB takes a
+# while, so the builds are kept in _build/prod/android/nifs, cached by
+# mix.lock and the crates' sources.
 #
 on:
   push:
-    branches: [main, claude/core-engine-scaffold]
+    branches: [main, claude/core-engine-scaffold, claude/duckdb-engine]
     paths:
       - .github/workflows/android.yml
       - scripts/android-*
@@ -99,8 +100,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
           key: cargo-android-${{ matrix.abi }}-${{ hashFiles('mix.lock') }}
-      # The dependency NIFs built for Android, by app version (Explorer's
-      # Polars build is the slow one). Bump the version when the names the
+      # The dependency NIFs built for Android, by app version (DuckDB's
+      # build is the slow one). Bump the version when the names the
       # NIFs ship under change, so a stale cache is not saved over.
       - uses: actions/cache/restore@v4
         id: nifs
