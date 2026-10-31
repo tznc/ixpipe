@@ -1,30 +1,17 @@
 defmodule IxpipeCore.Tools.OutputParquet do
-  @moduledoc "Writes its input to a Parquet file and passes it through. Config: `path`."
+  @moduledoc """
+  Writes its input to a Parquet file, local or in cloud storage (see
+  `IxpipeCore.Cloud`), says how many rows it wrote, and passes it through. Config: `path`, optional
+  `connection`.
+  """
   @behaviour IxpipeCore.Tool
-
-  alias IxpipeCore.{Context, Table}
-  import IxpipeCore.Duck, only: [literal: 1]
 
   @impl true
   def inputs, do: ["in"]
 
   @impl true
-  def fields,
-    do: [
-      %{
-        key: "path",
-        label: "File",
-        type: :path,
-        accept: ["parquet"],
-        save: true,
-        hint: "Where to write the Parquet file"
-      }
-    ]
+  def fields, do: IxpipeCore.Files.output_fields("Parquet", "parquet")
 
   @impl true
-  def run(%{"in" => t}, %{"path" => path}, ctx) do
-    Table.exec!(t.db, "COPY #{Table.ref(t)} TO #{literal(path)} (FORMAT parquet)")
-    Context.info(ctx, "Wrote #{IxpipeCore.plural(Table.count(t), "row")} to #{path}.")
-    t
-  end
+  def run(%{"in" => t}, config, ctx), do: IxpipeCore.Files.write(t, config, "FORMAT parquet", ctx)
 end

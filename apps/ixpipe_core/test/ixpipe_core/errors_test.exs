@@ -66,4 +66,16 @@ defmodule IxpipeCore.ErrorsTest do
     assert Errors.humanize("something odd") ==
              "something odd. Check the tool's settings and run again."
   end
+
+  test "a message that already says what to do is kept" do
+    raw =
+      IxpipeCore.Cloud.extension_error("httpfs", "IO Error: Failed to download extension")
+
+    assert Errors.humanize(raw) == raw
+
+    assert Errors.humanize(
+             "Postgres: couldn't connect to db:5432. Check the connection's host, port and credentials"
+           ) ==
+             "Postgres: couldn't connect to db:5432. Check the connection's host, port and credentials."
+  end
 end

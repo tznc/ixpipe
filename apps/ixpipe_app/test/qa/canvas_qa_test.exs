@@ -128,7 +128,7 @@ defmodule IxpipeApp.QA.CanvasTest do
 
       QA.capture(page, "canvas-10-ribbon", [
         "Ribbon under the header: tabs Home, In/Out (selected: teal tint), Preparation, Join, Parse, Transform; header Save workflow has a floppy icon, Run workflow a play icon",
-        "Groups Input (CSV, Excel, Parquet, SQLite, Postgres) and Output (same formats), each command an icon (file, spreadsheet, box, database, server) before its name, a caption beneath each group",
+        "Groups Input (CSV, Excel, Parquet, JSON, SQLite, Postgres, MySQL, SQL Server, BigQuery) and Output (the same bar BigQuery), each command an icon before its name, a caption beneath each group; nothing clipped",
         "No tools sidebar: the canvas starts at the left edge"
       ])
     end
@@ -227,9 +227,63 @@ defmodule IxpipeApp.QA.CanvasTest do
       assert :ok = Playwright.await_text(page, "North")
 
       QA.capture(page, "canvas-08-excel", [
-        "One Input Excel card; the panel shows File (with the workbook's path and a Choose… button), Sheet, and the header switch",
+        "One Input Excel card; the panel shows File (the workbook's path, a Choose… button), Sheet with a 'Regions' choice button over its input, Cell range, and the header switch",
         "Results lists region and sales: North 120, South 80, East 95, sales right-aligned",
         "The In/Out tab is selected; its Input and Output groups list Excel and Parquet"
+      ])
+    end
+  end
+
+  describe "connectors" do
+    setup do
+      qa = QA.launch!(open: "scratch.yaml")
+      on_exit(fn -> QA.stop(qa) end)
+
+      for conn <- [
+            %{
+              "name" => "warehouse",
+              "type" => "postgres",
+              "host" => "db.internal",
+              "database" => "sales",
+              "username" => "analyst",
+              "password_env" => "WAREHOUSE_PASSWORD"
+            },
+            %{
+              "name" => "reporting",
+              "type" => "postgres",
+              "host" => "db.internal",
+              "database" => "reports",
+              "username" => "analyst"
+            },
+            %{"name" => "lake", "type" => "s3", "key_id" => "AKIA", "secret_env" => "LAKE_SECRET"}
+          ],
+          do: :ok = IxpipeCore.Connections.put(qa.home, conn)
+
+      qa
+    end
+
+    test "a Postgres output chooses a saved connection", %{page: page} do
+      Playwright.click(page, role: "tab", name: "In/Out tab")
+      Playwright.click(page, "Add output_postgres")
+      Playwright.click(page, "Connection warehouse")
+      assert :ok = Playwright.await(page, role: "textbox", name: "Table")
+
+      QA.capture(page, "canvas-14-output-postgres", [
+        "One Output Postgres card (server icon); the panel is titled output_postgres_1, caption 'Output Postgres'",
+        "Connection lists reporting and warehouse as buttons, warehouse teal-tinted; a hint 'A saved Postgres connection' beneath",
+        "Table input, then 'If the table exists' with replace highlighted and append"
+      ])
+    end
+
+    test "a CSV input offers cloud connections", %{page: page} do
+      Playwright.click(page, role: "tab", name: "In/Out tab")
+      Playwright.click(page, "Add input_csv")
+      assert :ok = Playwright.await_text(page, "Cloud connection")
+
+      QA.capture(page, "canvas-15-input-csv-cloud", [
+        "The panel shows File (hint naming folders, patterns and s3://, gs://, az://), an 'Add a file name column' switch, then 'Cloud connection' marked Optional",
+        "Cloud connection lists one button, lake, not highlighted; the Postgres connections are not listed",
+        "Labels above inputs, gap between fields even, nothing centred"
       ])
     end
   end

@@ -54,7 +54,8 @@ defmodule IxpipeCore.ConnectionsTest do
     assert {:error, "Give the connection a name"} =
              Connections.put(dir, Map.delete(@warehouse, "name"))
 
-    assert {:error, "Choose a connection type: postgres or sqlite"} =
+    assert {:error,
+            "Choose a connection type: postgres, mysql, sqlserver, sqlite, s3, gcs, azure or bigquery"} =
              Connections.put(dir, %{@warehouse | "type" => "oracle"})
 
     assert {:error, "A postgres connection needs host, database and username"} =
@@ -90,5 +91,48 @@ defmodule IxpipeCore.ConnectionsTest do
     System.put_env("WAREHOUSE_PASSWORD", "pw")
     on_exit(fn -> System.delete_env("WAREHOUSE_PASSWORD") end)
     assert {:ok, "pw"} = Connections.password(@warehouse)
+  end
+
+  test "MySQL and SQL Server connections need a host, database and username", %{dir: dir} do
+    for type <- ~w(mysql sqlserver) do
+      assert :ok = Connections.put(dir, %{@warehouse | "type" => type, "name" => type})
+
+      assert {:error, "A #{type} connection needs host, database and username"} ==
+               Connections.put(dir, %{"name" => "x", "type" => type})
+    end
+  end
+
+  test "cloud storage connections keep their secrets in the environment", %{dir: dir} do
+    lake = %{
+      "name" => "lake",
+      "type" => "s3",
+      "key_id" => "AKIA1",
+      "secret_env" => "LAKE_SECRET",
+      "region" => "eu-west-1"
+    }
+
+    assert :ok = Connections.put(dir, lake)
+    assert {:ok, ^lake} = Connections.get(dir, "lake")
+
+    assert {:error, "An s3 connection needs key_id and secret_env"} =
+             Connections.put(dir, Map.delete(lake, "secret_env"))
+
+    assert {:error, "An azure connection needs a connection_string_env"} =
+             Connections.put(dir, %{"name" => "blob", "type" => "azure"})
+
+    for key <- ~w(secret connection_string session_token) do
+      assert {:error, message} = Connections.put(dir, Map.put(lake, key, "x"))
+      assert message =~ "aren't saved"
+    end
+
+    System.delete_env("LAKE_SECRET")
+
+    assert {:error, "Set the environment variable LAKE_SECRET to the secret for connection lake"} =
+             Connections.secret(lake, "secret_env")
+
+    System.put_env("LAKE_SECRET", "shh")
+    on_exit(fn -> System.delete_env("LAKE_SECRET") end)
+    assert {:ok, "shh"} = Connections.secret(lake, "secret_env")
+    assert {:ok, nil} = Connections.secret(lake, "session_token_env")
   end
 end

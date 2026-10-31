@@ -67,6 +67,11 @@ defmodule IxpipeCore.Errors do
         "#{Enum.at(m, 1)} doesn't take values of these types. " <>
           "Use a Formula to cast the columns to the types it takes."
 
+      # Already "what happened. what to do." (a tool's own message, such as
+      # a connection or extension error): kept as it is.
+      strip_kind(first) == first and first =~ ~r/[.!?)] +[A-Z]/ ->
+        sentence(first)
+
       true ->
         sentence(strip_kind(first)) <> " " <> @generic
     end

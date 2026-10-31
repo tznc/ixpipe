@@ -37,13 +37,23 @@ defmodule IxpipeApp.MainView do
     {"info", "Info", "Show info"}
   ]
   # The ribbon's tabs: Home edits and views the workflow; the rest hold the
-  # tools, by category, in labelled groups.
+  # tools, by category, in labelled groups. A group of rows (In/Out's files
+  # over databases) stacks them on a desktop and runs them on in one row,
+  # scrolling sideways, on a phone.
   @ribbon [
     {"home", "Home", []},
     {"inout", "In/Out",
      [
-       {"Input", ~w(input_csv input_excel input_parquet input_sqlite input_postgres)},
-       {"Output", ~w(output_csv output_excel output_parquet output_sqlite)}
+       {"Input",
+        [
+          ~w(input_csv input_excel input_parquet input_json),
+          ~w(input_sqlite input_postgres input_mysql input_sqlserver input_bigquery)
+        ]},
+       {"Output",
+        [
+          ~w(output_csv output_excel output_parquet output_json),
+          ~w(output_sqlite output_postgres output_mysql output_sqlserver)
+        ]}
      ]},
     {"prepare", "Preparation",
      [
@@ -170,8 +180,12 @@ defmodule IxpipeApp.MainView do
           </.ribbon_group>
         <% else %>
           <.ribbon_group :for={{group, tools} <- ribbon_groups(@tab)} label={group}>
-            <.button :for={tool <- tools} size={touch(@phone, :sm)} variant={:quiet} phx-click="add" phx-value-tool={tool}
-              icon={tool_icon(tool)} aria-label={"Add #{tool}"}>{command_label(group, tool)}</.button>
+            <div class="flex-col gap-1">
+              <div :for={row <- ribbon_rows(tools, @phone)} data-row="true" class="flex-row items-center gap-1">
+                <.button :for={tool <- row} size={touch(@phone, :sm)} variant={:quiet} phx-click="add" phx-value-tool={tool}
+                  icon={tool_icon(tool)} aria-label={"Add #{tool}"}>{command_label(group, tool)}</.button>
+              </div>
+            </div>
           </.ribbon_group>
         <% end %>
       </.ribbon>
@@ -487,6 +501,7 @@ defmodule IxpipeApp.MainView do
     files =
       for file <- assigns.dir |> File.ls!() |> Enum.sort(),
           String.ends_with?(file, ".yaml"),
+          file != "connections.yaml",
           do: {file, modified(Path.join(assigns.dir, file))}
 
     %{
@@ -893,12 +908,23 @@ defmodule IxpipeApp.MainView do
   attr(:dir, :string, default: nil)
   attr(:size, :atom, default: :sm)
 
-  # A database tool's saved connection: the saved connections of its kind,
-  # as choices, from connections.yaml in the workflows folder.
+  # A tool's saved connection: the saved connections of the kinds it takes,
+  # as choices, from connections.yaml in the workflows folder. An optional
+  # one clears with a second click.
   defp field(%{field: %{key: "connection"}} = assigns) do
-    kind = if Tools.name(assigns.node.tool) =~ "postgres", do: "postgres", else: "sqlite"
-    names = for %{"type" => ^kind, "name" => name} <- Connections.list(assigns.dir), do: name
-    assigns = Map.merge(assigns, %{names: names, kind: kind})
+    kinds = assigns.field[:kinds] || []
+
+    names =
+      for %{"type" => type, "name" => name} <- Connections.list(assigns.dir),
+          type in kinds,
+          do: name
+
+    assigns =
+      Map.merge(assigns, %{
+        names: names,
+        cloud: kinds -- IxpipeCore.Cloud.kinds() == [],
+        kinds: kinds |> Enum.map(&kind_label/1) |> Connections.join("or")
+      })
 
     ~H"""
     <div class="flex-col gap-1">
@@ -908,14 +934,19 @@ defmodule IxpipeApp.MainView do
       </div>
       <div :if={@names != []} class="flex-row flex-wrap gap-1">
         <.button :for={name <- @names} size={@size} phx-click="choose" phx-value-key="connection"
-          phx-value-value={name} aria-label={"Connection #{name}"}
+          phx-value-value={if @field[:optional] && @node.config["connection"] == name, do: "", else: name}
+          aria-label={"Connection #{name}"}
           class={if @node.config["connection"] == name, do: "border-primary bg-primary/12", else: ""}>
           {name}
         </.button>
       </div>
-      <.caption :if={@names == []}>
-        No saved connections yet. Add a {@kind} connection to connections.yaml in {@dir}.
+      <.caption :if={@names == [] && !@cloud}>
+        No saved connections yet. Add {@kinds} connection to connections.yaml in {@dir}.
       </.caption>
+      <.caption :if={@names == [] && @cloud}>
+        No saved cloud connections yet. Public buckets need none; for others, add {@kinds} connection to connections.yaml in {@dir}.
+      </.caption>
+      <.caption :if={@names != [] && @field[:hint]}>{@field.hint}</.caption>
       <.caption :if={@error} class="text-danger">{@error}</.caption>
     </div>
     """
@@ -999,11 +1030,20 @@ defmodule IxpipeApp.MainView do
   end
 
   defp field(assigns) do
+    assigns = Map.put(assigns, :suggestions, suggestions(assigns.node, assigns.field.key))
+
     ~H"""
     <div class="flex-col gap-1">
       <div class="flex-row items-center gap-2">
         <.label>{@field.label}</.label>
         <.caption :if={@field[:optional]}>Optional</.caption>
+      </div>
+      <div :if={@suggestions != []} class="flex-row flex-wrap gap-1">
+        <.button :for={value <- @suggestions} size={@size} phx-click="picked" phx-value-key={@field.key}
+          phx-value-path={value} aria-label={"#{@field.label} #{value}"}
+          class={if @node.config[@field.key] == value, do: "border-primary bg-primary/12", else: ""}>
+          {value}
+        </.button>
       </div>
       <input name={@field.key} value={@drafts[@field.key] || Config.format(@field, @node.config[@field.key])}
         aria-label={@field.label} class="w-full" />
@@ -1012,6 +1052,27 @@ defmodule IxpipeApp.MainView do
     </div>
     """
   end
+
+  # Values a tool suggests for a setting (an Excel workbook's sheets).
+  defp suggestions(node, key) do
+    Code.ensure_loaded(node.tool)
+
+    if function_exported?(node.tool, :suggestions, 2),
+      do: node.tool.suggestions(key, node.config),
+      else: []
+  end
+
+  @kind_labels %{
+    "postgres" => "a Postgres",
+    "mysql" => "a MySQL",
+    "sqlserver" => "a SQL Server",
+    "bigquery" => "a BigQuery",
+    "sqlite" => "a SQLite",
+    "s3" => "an s3",
+    "gcs" => "gcs",
+    "azure" => "azure"
+  }
+  defp kind_label(kind), do: Map.get(@kind_labels, kind, kind)
 
   defp chosen(field, node), do: node.config[field.key] || hd(field.options)
 
@@ -1062,6 +1123,14 @@ defmodule IxpipeApp.MainView do
     "regex" => "RegEx",
     "data_cleansing" => "Data cleansing",
     "input_postgres" => "Input Postgres",
+    "output_postgres" => "Output Postgres",
+    "input_json" => "Input JSON",
+    "output_json" => "Output JSON",
+    "input_mysql" => "Input MySQL",
+    "output_mysql" => "Output MySQL",
+    "input_sqlserver" => "Input SQL Server",
+    "output_sqlserver" => "Output SQL Server",
+    "input_bigquery" => "Input BigQuery",
     "record_id" => "Record ID",
     "running_total" => "Running total",
     "generate_rows" => "Generate rows",
@@ -1080,7 +1149,11 @@ defmodule IxpipeApp.MainView do
     "excel" => "file-spreadsheet",
     "parquet" => "file-box",
     "sqlite" => "database",
+    "json" => "file-braces",
     "postgres" => "server",
+    "mysql" => "database-zap",
+    "sqlserver" => "server-cog",
+    "bigquery" => "warehouse",
     "select" => "list-checks",
     "formula" => "square-function",
     "data_cleansing" => "sparkles",
@@ -1116,6 +1189,10 @@ defmodule IxpipeApp.MainView do
 
   defp ribbon_groups(tab),
     do: Enum.find_value(@ribbon, [], fn {key, _, groups} -> key == tab && groups end)
+
+  defp ribbon_rows([row | _] = rows, false) when is_list(row), do: rows
+  defp ribbon_rows([row | _] = rows, true) when is_list(row), do: [Enum.concat(rows)]
+  defp ribbon_rows(tools, _phone), do: [tools]
 
   # In the Input and Output groups the group names the direction: "CSV".
   defp command_label(group, tool),

@@ -13,7 +13,8 @@ defmodule IxpipeCore.Tool do
   for a `:choice`, and `optional: true` when `run/3` can do without it. A
   `:path` may list the file extensions it `accept`s, and `save: true` when
   the tool writes the file (an editor then offers a save dialog). `default`
-  is what `run/3` assumes when an optional setting is absent.
+  is what `run/3` assumes when an optional setting is absent. A `connection`
+  setting lists the saved connection `kinds` (types) it takes.
   """
   @type field :: %{
           required(:key) => String.t(),
@@ -24,7 +25,8 @@ defmodule IxpipeCore.Tool do
           optional(:optional) => boolean(),
           optional(:accept) => [String.t()],
           optional(:save) => boolean(),
-          optional(:default) => term()
+          optional(:default) => term(),
+          optional(:kinds) => [String.t()]
         }
 
   @callback inputs() :: [String.t()]
@@ -39,7 +41,12 @@ defmodule IxpipeCore.Tool do
   without it have one output, `out`.
   """
   @callback outputs() :: [String.t()]
-  @optional_callbacks outputs: 0, optional_inputs: 0
+  @doc """
+  Values to offer for setting `key`, given the node's `config` so far (an
+  Excel tool's sheets), as quick choices beside its text box.
+  """
+  @callback suggestions(key :: String.t(), config :: map()) :: [String.t()]
+  @optional_callbacks outputs: 0, optional_inputs: 0, suggestions: 2
   @doc "The tool's settings, in the order an editor shows them."
   @callback fields() :: [field()]
   @doc """

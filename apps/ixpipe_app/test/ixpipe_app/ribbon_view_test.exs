@@ -135,4 +135,25 @@ defmodule IxpipeApp.RibbonViewTest do
 
     assert by_tool |> Enum.uniq() |> Enum.map(&elem(&1, 1)) |> then(&(&1 == Enum.uniq(&1)))
   end
+
+  # Too many for one row at 1200px: files above, databases below, as an
+  # Access ribbon stacks small commands.
+  test "the In/Out groups stack files over databases", %{w: w} do
+    Test.click(w, "In/Out tab")
+
+    for group <- ["Input", "Output"] do
+      rows =
+        for %{"a" => %{"data-row" => _}} = row <- descendants(hd(UI.find(w, group))),
+            do: for(%{"a" => %{"aria-label" => "Add " <> tool}} <- descendants(row), do: tool)
+
+      prefix = String.downcase(group) <> "_"
+
+      assert [files, databases] = rows
+      assert (prefix <> "csv") in files and (prefix <> "json") in files
+      assert (prefix <> "postgres") in databases and (prefix <> "sqlserver") in databases
+    end
+  end
+
+  defp descendants(%{"c" => children}), do: Enum.flat_map(children, &[&1 | descendants(&1)])
+  defp descendants(_), do: []
 end
