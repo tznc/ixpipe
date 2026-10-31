@@ -1,8 +1,16 @@
 name: CI
 
+# Changes that only touch docs or agent skills (Markdown, .claude/) don't
+# run CI.
 on:
   push:
+    paths-ignore:
+      - "**/*.md"
+      - ".claude/**"
   pull_request:
+    paths-ignore:
+      - "**/*.md"
+      - ".claude/**"
 
 env:
   OTP_TAG: OTP-29.1.2
