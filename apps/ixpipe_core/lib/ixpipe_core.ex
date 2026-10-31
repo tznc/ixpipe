@@ -104,7 +104,8 @@ defmodule IxpipeCore do
     tools = Map.new(spec.nodes, &{&1.id, &1.tool})
 
     Enum.reduce(spec.nodes, Runic.workflow(name: spec.name || "ixpipe"), fn node, wrk ->
-      ports = node.tool.inputs()
+      # Only the connected ports: an optional one may be left open.
+      ports = Enum.filter(node.tool.inputs(), &Map.has_key?(node.inputs, &1))
       sources = Enum.map(ports, &Spec.source(node.inputs[&1]))
       # A Runic join never fires on a repeated parent, so each parent node
       # feeds the step once; `slots` maps every port to its parent's
@@ -143,6 +144,17 @@ defmodule IxpipeCore do
 
       2 ->
         Runic.step(fn x, y -> run_tool(ctx, tool, inputs(slots, [x, y]), config) end, name: id)
+
+      3 ->
+        Runic.step(fn x, y, z -> run_tool(ctx, tool, inputs(slots, [x, y, z]), config) end,
+          name: id
+        )
+
+      4 ->
+        Runic.step(
+          fn w, x, y, z -> run_tool(ctx, tool, inputs(slots, [w, x, y, z]), config) end,
+          name: id
+        )
     end
   end
 
