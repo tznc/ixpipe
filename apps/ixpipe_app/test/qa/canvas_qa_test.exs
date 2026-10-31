@@ -138,7 +138,7 @@ defmodule IxpipeApp.QA.CanvasTest do
       assert :ok = Playwright.await(page, role: "button", name: "Add transpose")
 
       QA.capture(page, "canvas-11-ribbon-transform", [
-        "Transform tab selected: Aggregate (sigma icon, Summarize) and Reshape (table icon Cross tab, left-right arrows Transpose)",
+        "Transform tab selected: Aggregate (sigma icon Summarize, trending line Running total), Sequence (hash Record ID, stacked columns Tile, list-plus Generate rows) and Reshape (table icon Cross tab, left-right arrows Transpose)",
         "Icons are the same grey as their labels, 16px, vertically centred with the text"
       ])
 
@@ -146,7 +146,7 @@ defmodule IxpipeApp.QA.CanvasTest do
       assert :ok = Playwright.await(page, role: "button", name: "Add data_cleansing")
 
       QA.capture(page, "canvas-12-ribbon-preparation", [
-        "Columns (Select with a checklist icon, Data cleansing with sparkles), Formula (function icon Formula, Multi-row, Multi-field) and Rows (funnel Filter, arrows Sort, dice Sample, list-x Unique)",
+        "Columns (Select with a checklist icon, Data cleansing with sparkles, Auto field with a wand, Imputation with a paint bucket), Formula (function icon Formula, Multi-row, Multi-field) and Rows (funnel Filter, arrows Sort, dice Sample, list-x Unique), all visible without scrolling",
         "No command lacks an icon; nothing wraps or clips"
       ])
     end

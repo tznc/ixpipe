@@ -58,6 +58,27 @@ defmodule IxpipeApp.RibbonViewTest do
     assert Enum.sort(added) == Enum.map(IxpipeCore.Tools.names(), &"Add #{&1}")
   end
 
+  test "the everyday tools sit in Preparation, Join and Transform, humanised", %{w: w} do
+    Test.click(w, "Preparation tab")
+
+    for label <- ["Imputation", "Auto field"],
+        do: assert(Test.text(w) =~ label, label)
+
+    Test.click(w, "Join tab")
+    assert attrs(w, "Match")["role"] == "group"
+
+    for label <- ["Find replace", "Append fields", "Join multiple", "Fuzzy match"],
+        do: assert(Test.text(w) =~ label, label)
+
+    # Running total with Summarize, as Alteryx's Transform has it; Sequence
+    # beside it so Preparation's Columns, Formula and Rows fit a desktop window.
+    Test.click(w, "Transform tab")
+    assert attrs(w, "Sequence")["role"] == "group"
+
+    for label <- ["Running total", "Record ID", "Tile", "Generate rows"],
+        do: assert(Test.text(w) =~ label, label)
+  end
+
   test "a tool added from a tab lands on the canvas", %{w: w, pid: pid} do
     Test.click(w, "In/Out tab")
     assert Test.text(w) =~ "Input"

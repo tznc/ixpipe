@@ -80,7 +80,7 @@ defmodule IxpipeCore.FormulaToolsTest do
     end
 
     test "a reference to a missing column says which", %{t: t, ctx: ctx} do
-      assert_raise RuntimeError, ~r/\[Row-1:nope\]: nope is not a column/, fn ->
+      assert_raise RuntimeError, ~r/Column "nope" in \[Row-1:nope\] isn't in the input/, fn ->
         MultiRowFormula.run(%{"in" => t}, %{"as" => "x", "expr" => "[Row-1:nope]"}, ctx)
       end
     end
@@ -159,7 +159,7 @@ defmodule IxpipeCore.FormulaToolsTest do
     end
 
     test "a missing column says which", %{t: t, ctx: ctx} do
-      assert_raise RuntimeError, ~r/nope is not a column/, fn ->
+      assert_raise RuntimeError, ~r/Column "nope" isn't in the input/, fn ->
         MultiFieldFormula.run(%{"in" => t}, %{"columns" => ["nope"], "expr" => "_current_"}, ctx)
       end
     end

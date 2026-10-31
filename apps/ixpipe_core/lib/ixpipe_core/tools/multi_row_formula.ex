@@ -101,7 +101,7 @@ defmodule IxpipeCore.Tools.MultiRowFormula do
   @spec translate(String.t(), %{String.t() => String.t()}, map() | nil) :: String.t()
   def translate(expr, defaults, types \\ nil) do
     Regex.replace(@ref, expr, fn ref, sign, n, column ->
-      if types && !Map.has_key?(types, column), do: raise("#{ref}: " <> missing(column))
+      if types && !Map.has_key?(types, column), do: raise(missing(column, " in #{ref}"))
       default = if d = defaults[column], do: ", #{d}", else: ""
 
       case {sign, String.to_integer(n)} do
@@ -112,7 +112,8 @@ defmodule IxpipeCore.Tools.MultiRowFormula do
     end)
   end
 
-  defp missing(column), do: "#{column} is not a column of the input. Check its spelling."
+  defp missing(column, where \\ ""),
+    do: ~s(Column "#{column}"#{where} isn't in the input. Check its spelling.)
 
   defp zero("VARCHAR"), do: "''"
 

@@ -70,7 +70,7 @@ defmodule IxpipeCore.Tools.MultiFieldFormula do
       case config["columns"] do
         columns when columns not in [nil, []] ->
           for c <- columns, !Map.has_key?(types, c) do
-            raise "#{c} is not a column of the input. Check its spelling."
+            raise ~s(Column "#{c}" isn't in the input. Check its spelling.)
           end
 
           columns

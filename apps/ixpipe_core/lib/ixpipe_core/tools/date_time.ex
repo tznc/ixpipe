@@ -14,7 +14,7 @@ defmodule IxpipeCore.Tools.DateTime do
   DuckDB's own and passes through.
 
   A value that does not parse is NULL in `out`; its rows are also in
-  `failed`, so a run shows how many there were.
+  `failed`, and a warning says how many there were.
   """
   @behaviour IxpipeCore.Tool
 
@@ -108,13 +108,15 @@ defmodule IxpipeCore.Tools.DateTime do
   @impl true
   def run(%{"in" => t}, %{"column" => column, "format" => format} = config, ctx) do
     unless column in Table.columns(t),
-      do: raise("#{column} is not a column of the input. Check its spelling.")
+      do: raise(~s(Column "#{column}" isn't in the input. Check its spelling.))
 
     fmt = literal(strftime(format))
     c = ident(column)
 
+    convert = config["convert"] || "parse"
+
     {result, suffix} =
-      case config["convert"] || "parse" do
+      case convert do
         "format" ->
           {"strftime(TRY_CAST(#{c} AS TIMESTAMP), #{fmt})", "_text"}
 
@@ -143,6 +145,32 @@ defmodule IxpipeCore.Tools.DateTime do
         "SELECT * FROM #{Table.ref(t)} WHERE #{c} IS NOT NULL AND (#{result}) IS NULL"
       )
 
+    warn_failed(ctx, failed, column, convert, format)
     %{"out" => out, "failed" => failed}
+  end
+
+  defp warn_failed(ctx, failed, column, convert, format) do
+    %{rows: [[count, example]]} =
+      Table.query!(
+        failed.db,
+        "SELECT count(*), CAST(first(#{ident(column)}) AS VARCHAR) FROM #{Table.ref(failed)}"
+      )
+
+    if count > 0 do
+      {values, are} = if count == 1, do: {"1 value", "is"}, else: {"#{count} values", "are"}
+
+      what =
+        if convert == "format",
+          do: "couldn't be read as a date",
+          else: "couldn't be parsed as #{format}"
+
+      Context.warn(
+        ctx,
+        ~s|#{values} of "#{column}" #{what} and #{are} empty ("#{example}"). | <>
+          "Check the format matches the column; the failed output has their rows."
+      )
+    end
+
+    :ok
   end
 end
