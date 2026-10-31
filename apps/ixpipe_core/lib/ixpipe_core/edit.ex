@@ -54,6 +54,10 @@ defmodule IxpipeCore.Edit do
     end
   end
 
+  @doc "Replaces node `id`'s config with `fun` of it, for editors that build values (Select's columns)."
+  @spec update_config(Spec.t(), String.t(), (map() -> map())) :: Spec.t()
+  def update_config(spec, id, fun), do: update(spec, id, &%{&1 | config: fun.(&1.config)})
+
   @doc "Removes node `id` and disconnects every input that read any of its outputs."
   @spec remove_node(Spec.t(), String.t()) :: Spec.t()
   def remove_node(spec, id) do

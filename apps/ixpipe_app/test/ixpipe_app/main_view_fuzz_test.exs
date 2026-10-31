@@ -52,6 +52,7 @@ defmodule IxpipeApp.MainViewFuzzTest do
     nodes:
       - {id: orders, tool: input_csv, position: {x: 40, y: 40}, config: {path: #{@fixtures}/orders.csv}}
       - {id: sorted, tool: sort, position: {x: 260, y: 40}, inputs: {in: orders}, config: {by: [amount]}}
+      - {id: pick, tool: select, position: {x: 480, y: 40}, inputs: {in: sorted}}
     """)
 
     window = System.unique_integer([:positive])
@@ -96,6 +97,18 @@ defmodule IxpipeApp.MainViewFuzzTest do
              "YAML does not round-trip after #{inspect(trail)}"
 
       assert String.starts_with?(assigns.path, dir)
+
+      # Results browses within its table: a page of at most 50 rows that
+      # starts inside it, and results only while there are row counts.
+      if grid = assigns.grid do
+        assert grid.offset == 0 or grid.offset < grid.total,
+               "page past the end after #{inspect(trail)}"
+
+        assert length(grid.rows) <= 50
+      end
+
+      assert assigns.results == %{} or assigns.rows != %{},
+             "results without a run after #{inspect(trail)}"
 
       # A run's messages and statuses are for the workflow as it is: any
       # edit clears them.

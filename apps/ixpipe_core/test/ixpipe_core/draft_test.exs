@@ -103,6 +103,15 @@ defmodule IxpipeCore.DraftTest do
       assert Enum.find(spec.nodes, &(&1.id == "sorted")).config == %{"by" => ["amount"]}
     end
 
+    test "update_config/3 changes a node's config with a function", %{spec: spec} do
+      spec = Edit.update_config(spec, "sorted", &Map.put(&1, "desc", true))
+
+      assert Enum.find(spec.nodes, &(&1.id == "sorted")).config == %{
+               "by" => ["amount"],
+               "desc" => true
+             }
+    end
+
     test "set_config/4 reports bad text and unknown settings", %{spec: spec} do
       assert Edit.set_config(spec, "sorted", "by", "") == {:error, "Required"}
       assert Edit.set_config(spec, "sorted", "nope", "x") == {:error, "Unknown setting"}

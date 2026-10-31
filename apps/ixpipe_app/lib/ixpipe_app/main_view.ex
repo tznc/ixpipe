@@ -9,14 +9,16 @@ defmodule IxpipeApp.MainView do
   use Baguette.View
   import IxpipeApp.Components
 
-  alias IxpipeCore.{Config, Connections, Edit, Spec, Table, Tools}
+  alias IxpipeCore.{Config, Connections, Edit, Profile, Spec, Table, Tools}
+  alias IxpipeCore.Tools.Select
 
   @node_width 200
   @port_y 24
   @toast_ms 6_000
   @zooms [50, 75, 100, 125, 150]
   @history 100
-  @preview_rows 50
+  @page_rows 50
+  @browse %{page: 0, sort: nil, view: "data"}
   # Narrower than this (a phone in portrait), the window shows one pane at
   # a time: Canvas, Properties, Results or Messages.
   @phone_width 640
@@ -75,7 +77,18 @@ defmodule IxpipeApp.MainView do
       status: nil,
       toast: nil,
       rows: %{},
-      previews: %{},
+      # The last run's tables, alive in its DuckDB database while Results
+      # browses them; an edit drops them.
+      results: %{},
+      # The last run's columns of every output, kept across edits so
+      # Select's editor can list its input's columns.
+      schemas: %{},
+      # Results: the page, sort and view (data or profile), and what they show.
+      browse: @browse,
+      grid: nil,
+      profile: nil,
+      # The Select row whose type picker is open.
+      type_open: nil,
       selected: nil,
       output: nil,
       drafts: %{},
@@ -231,15 +244,16 @@ defmodule IxpipeApp.MainView do
         </div>
         <div :if={!@phone} class="h-px w-full bg-border" />
         <.results :if={!@phone && @panel == "results"} node={@node} output={@node && output_key(@node, @output)}
-          preview={@node && @previews[output_key(@node, @output)]} />
+          total={@node && @rows[output_key(@node, @output)]} grid={@grid} profile={@profile} browse={@browse} />
         <.messages :if={!@phone && @panel == "messages"} run={@run} level={@level} spec={@spec} />
         </div>
         <.results :if={@phone && @pane == "results"} node={@node} output={@node && output_key(@node, @output)}
-          preview={@node && @previews[output_key(@node, @output)]} phone />
+          total={@node && @rows[output_key(@node, @output)]} grid={@grid} profile={@profile} browse={@browse} phone />
         <.messages :if={@phone && @pane == "messages"} run={@run} level={@level} spec={@spec} phone />
         <div :if={!@phone} class="w-px h-full bg-border" />
         <.properties :if={!@phone || @pane == "properties"} node={@node} drafts={@drafts} errors={@errors}
-          formula_rows={@formula_rows} dir={@dir} phone={@phone} />
+          formula_rows={@formula_rows} dir={@dir} phone={@phone}
+          schema={@node && input_schema(@spec, @node, @schemas)} type_open={@type_open} />
         <%!-- On a phone, over whichever pane shows. --%>
         <.feedback :if={@phone} toast={@toast} status={@status} phone />
       </div>
@@ -310,6 +324,35 @@ defmodule IxpipeApp.MainView do
     {:noreply, configure(assigns, "formulas", text, rows)}
   end
 
+  # Select's editor: a row's name, or a type typed rather than chosen.
+  def handle_event("config", %{"_target" => "select_name_" <> i = key} = values, assigns) do
+    text = values[key] || ""
+    i = String.to_integer(i)
+    assigns = %{assigns | drafts: Map.put(assigns.drafts, key, text)}
+    {:noreply, edit_select(assigns, &Select.edit(&1, &2, i, %{"rename" => text}), key)}
+  end
+
+  def handle_event("config", %{"_target" => "select_type_" <> i = key} = values, assigns) do
+    text = String.trim(values[key] || "")
+    assigns = %{assigns | drafts: Map.put(assigns.drafts, key, text)}
+
+    cond do
+      text == "" ->
+        {:noreply, %{assigns | errors: Map.delete(assigns.errors, key)}}
+
+      Select.type?(text) ->
+        assigns = %{assigns | errors: Map.delete(assigns.errors, key)}
+        i = String.to_integer(i)
+        {:noreply, edit_select(assigns, &Select.edit(&1, &2, i, %{"type" => text}), key)}
+
+      true ->
+        message =
+          "#{text} is not a type. Use one of #{Enum.join(Select.common_types(), ", ")}."
+
+        {:noreply, %{assigns | errors: Map.put(assigns.errors, key, message)}}
+    end
+  end
+
   def handle_event("config", %{"_target" => key} = values, assigns) do
     text = values[key] || ""
     {:noreply, configure(assigns, key, text, text)}
@@ -323,6 +366,50 @@ defmodule IxpipeApp.MainView do
 
   def handle_event("picked", %{"key" => key, "path" => path}, assigns),
     do: {:noreply, configure(assigns, key, path, path)}
+
+  def handle_event("select_keep", %{"index" => i, "checked" => checked}, assigns) do
+    i = String.to_integer(i)
+    {:noreply, edit_select(assigns, &Select.edit(&1, &2, i, %{"keep" => checked == true}))}
+  end
+
+  def handle_event("select_move", %{"index" => i, "by" => by}, assigns) do
+    {i, by} = {String.to_integer(i), String.to_integer(by)}
+    assigns = %{assigns | drafts: %{}, errors: %{}, type_open: nil}
+    {:noreply, edit_select(assigns, &Select.move(&1, &2, i, by))}
+  end
+
+  def handle_event("select_type_open", %{"index" => i}, assigns) do
+    i = String.to_integer(i)
+    {:noreply, %{assigns | type_open: if(assigns.type_open == i, do: nil, else: i)}}
+  end
+
+  def handle_event("select_type", %{"index" => i, "type" => type}, assigns) do
+    i = String.to_integer(i)
+    assigns = %{assigns | type_open: nil, drafts: Map.delete(assigns.drafts, "select_type_#{i}")}
+    {:noreply, edit_select(assigns, &Select.edit(&1, &2, i, %{"type" => type}))}
+  end
+
+  # Results: pages, sorting by a column header (ascending, descending, off)
+  # and the data or profile view.
+  def handle_event("page", %{"by" => by}, %{browse: browse} = assigns) do
+    page = max(browse.page + String.to_integer(by), 0)
+    {:noreply, refresh(%{assigns | browse: %{browse | page: page}})}
+  end
+
+  def handle_event("sort", %{"column" => column}, %{browse: browse} = assigns) do
+    sort =
+      case browse.sort do
+        {^column, :asc} -> {column, :desc}
+        {^column, :desc} -> nil
+        _ -> {column, :asc}
+      end
+
+    {:noreply, refresh(%{assigns | browse: %{browse | sort: sort, page: 0}})}
+  end
+
+  def handle_event("browse_view", %{"view" => view}, %{browse: browse} = assigns)
+      when view in ["data", "profile"],
+      do: {:noreply, refresh(%{assigns | browse: %{browse | view: view}})}
 
   def handle_event("add_formula", _values, assigns),
     do: {:noreply, %{assigns | formula_rows: formula_rows(assigns) + 1}}
@@ -418,7 +505,7 @@ defmodule IxpipeApp.MainView do
   end
 
   def handle_event("show_output", %{"output" => output}, assigns),
-    do: {:noreply, %{assigns | output: output}}
+    do: {:noreply, refresh(%{assigns | output: output, browse: @browse})}
 
   def handle_event("connect_to", _values, assigns) do
     status = {:info, "Choose where the data comes from first.", "Press out on that node."}
@@ -430,26 +517,31 @@ defmodule IxpipeApp.MainView do
   def handle_event("run", _values, assigns) do
     case Spec.validate(assigns.spec) do
       {:ok, spec} ->
+        # The run's tables stay alive in its database while Results browses
+        # them, a partial run's too: only the tools that ran have tables.
         run = IxpipeCore.execute(with_home(spec, assigns.dir))
-        previews = Map.new(run.tables, fn {id, table} -> {id, preview(table)} end)
-        rows = Map.new(previews, fn {id, p} -> {id, p.total} end)
+        rows = Map.new(run.tables, fn {id, table} -> {id, Table.count(table)} end)
+        schemas = Map.new(run.tables, fn {id, table} -> {id, Table.schema(table)} end)
 
         # On a phone, a selected tool's rows show at once.
         pane = if phone?(assigns) && assigns.selected, do: "results", else: assigns.pane
 
-        {:noreply,
-         %{
-           assigns
-           | status: run_status(run, assigns.selected),
-             rows: rows,
-             previews: previews,
-             pane: pane,
-             run: %{nodes: run.nodes, messages: canvas_order(run.messages, assigns.spec)}
-         }}
+        assigns = %{
+          assigns
+          | status: run_status(run, assigns.selected),
+            rows: rows,
+            results: run.tables,
+            # Columns of the tools that ran; the others keep their last.
+            schemas: Map.merge(assigns.schemas, schemas),
+            pane: pane,
+            run: %{nodes: run.nodes, messages: canvas_order(run.messages, assigns.spec)}
+        }
+
+        {:noreply, refresh(assigns)}
 
       {:error, reason} ->
         status = {:danger, "The workflow can't run yet.", Spec.format_error(reason)}
-        {:noreply, %{assigns | status: status, rows: %{}, previews: %{}, run: nil}}
+        {:noreply, clear_run(%{assigns | status: status})}
     end
   end
 
@@ -497,16 +589,24 @@ defmodule IxpipeApp.MainView do
         from: nil,
         status: nil,
         toast: nil,
-        rows: %{},
-        run: nil,
+        schemas: %{},
         pane: "canvas"
     }
+    |> clear_run()
   end
 
   defp open(assigns, path) do
     case path |> File.read!() |> Spec.decode() do
       {:ok, spec} ->
-        %{assigns | spec: place(spec), path: path, error: nil, status: nil, rows: %{}, run: nil}
+        clear_run(%{
+          assigns
+          | spec: place(spec),
+            path: path,
+            error: nil,
+            status: nil,
+            schemas: %{},
+            selected: nil
+        })
 
       {:error, reason} ->
         %{home(assigns) | error: "#{Path.basename(path)}: #{Spec.format_error(reason)}"}
@@ -547,12 +647,15 @@ defmodule IxpipeApp.MainView do
         future: future,
         last_step: step,
         from: nil,
-        status: nil,
-        rows: %{},
-        previews: %{},
-        run: nil
+        status: nil
     }
+    |> clear_run()
   end
+
+  # Forgets the last run's results (its database goes with them), keeping
+  # its columns for Select's editor.
+  defp clear_run(assigns),
+    do: %{assigns | rows: %{}, results: %{}, run: nil, grid: nil, profile: nil}
 
   # Database tools find saved connections in the workflows folder; it is
   # given for the run only, never saved into the workflow.
@@ -568,17 +671,85 @@ defmodule IxpipeApp.MainView do
         last_step: nil,
         from: nil,
         status: nil,
-        rows: %{},
-        previews: %{},
-        run: nil,
         selected: selected,
         drafts: %{},
-        errors: %{}
+        errors: %{},
+        type_open: nil
     }
+    |> clear_run()
   end
 
-  defp select(assigns, id),
-    do: %{assigns | selected: id, output: nil, drafts: %{}, errors: %{}, formula_rows: 1}
+  defp select(assigns, id) do
+    %{
+      assigns
+      | selected: id,
+        output: nil,
+        drafts: %{},
+        errors: %{},
+        formula_rows: 1,
+        type_open: nil,
+        browse: @browse
+    }
+    |> refresh()
+  end
+
+  # Applies `fun` (config, input schema -> config) to the selected Select.
+  # Edits with the same `step` in a row are one undo step.
+  defp edit_select(assigns, fun, step \\ nil) do
+    node = Enum.find(assigns.spec.nodes, &(&1.id == assigns.selected))
+    schema = input_schema(assigns.spec, node, assigns.schemas) || []
+    step = step && {:config, node.id, step}
+    edit(assigns, &Edit.update_config(&1, node.id, fn config -> fun.(config, schema) end), step)
+  end
+
+  # The last run's columns of what feeds `node`'s input, or nil.
+  defp input_schema(spec, node, schemas) do
+    with ref when is_binary(ref) <- node.inputs["in"],
+         {from, output} = Spec.source(ref),
+         %{} = source <- Enum.find(spec.nodes, &(&1.id == from)) do
+      schemas[if(output, do: ref, else: output_key(source, nil))]
+    else
+      _ -> nil
+    end
+  end
+
+  # What Results shows for the selected tool's output: a page of its rows,
+  # or its columns' profile, read from the run's table.
+  defp refresh(%{spec: nil} = assigns), do: assigns
+
+  defp refresh(assigns) do
+    node = Enum.find(assigns.spec.nodes, &(&1.id == assigns.selected))
+    table = node && assigns.results[output_key(node, assigns.output)]
+
+    cond do
+      table == nil ->
+        %{assigns | grid: nil, profile: nil}
+
+      assigns.browse.view == "profile" ->
+        %{assigns | grid: nil, profile: Profile.columns(table)}
+
+      true ->
+        total = assigns.rows[table.name] || Table.count(table)
+        last = max(div(total - 1, @page_rows), 0)
+        browse = %{assigns.browse | page: min(assigns.browse.page, last)}
+        offset = browse.page * @page_rows
+
+        {columns, rows} =
+          Table.page(table, offset: offset, limit: @page_rows, sort: browse.sort)
+
+        numeric = for {name, type} <- Table.schema(table), Profile.numeric?(type), do: name
+
+        grid = %{
+          columns: columns,
+          rows: Enum.map(rows, &Enum.map(&1, fn v -> cell(v) end)),
+          numeric: numeric,
+          offset: offset,
+          total: total
+        }
+
+        %{assigns | browse: browse, grid: grid, profile: nil}
+    end
+  end
 
   # Applies a setting typed or chosen in the properties panel. What was typed
   # stays as a draft, so the input never rewrites it; an invalid value shows
@@ -601,19 +772,6 @@ defmodule IxpipeApp.MainView do
     lines = formula_lines(node, assigns.drafts)
     max(length(lines), assigns.formula_rows)
   end
-
-  # The first rows of a tool's output, as strings, for the results grid, and
-  # its row count: all the view keeps, so a run's tables can be dropped.
-  defp preview(table) do
-    {columns, rows} = Table.values(table, @preview_rows)
-    rows = Enum.map(rows, &Enum.map(&1, fn v -> cell(v) end))
-    numeric = for {name, type} <- Table.dtypes(table), numeric?(type), do: name
-    %{columns: columns, rows: rows, total: Table.count(table), numeric: numeric}
-  end
-
-  @numeric ~w(TINYINT SMALLINT INTEGER BIGINT HUGEINT UTINYINT USMALLINT UINTEGER UBIGINT
-              UHUGEINT FLOAT DOUBLE)
-  defp numeric?(type), do: type in @numeric or String.starts_with?(type, "DECIMAL")
 
   defp cell(nil), do: "—"
   defp cell(value) when is_float(value), do: :erlang.float_to_binary(value, [:short])
@@ -706,16 +864,36 @@ defmodule IxpipeApp.MainView do
   end
 
   attr(:node, :map, default: nil)
-  attr(:preview, :map, default: nil)
   attr(:output, :string, default: nil)
+  attr(:total, :integer, default: nil)
+  attr(:grid, :map, default: nil)
+  attr(:profile, :list, default: nil)
+  attr(:browse, :map, required: true)
   attr(:phone, :boolean, default: false)
 
+  # Browse, as in Alteryx: every row a page at a time, sorted by a column
+  # header, or a profile of each column. Read from the run's tables.
   defp results(assigns) do
     ~H"""
-    <section class={"flex-col gap-2 p-4 " <> if(@phone, do: "flex-1", else: "h-[240px]")} aria-label="Results">
-      <div class="flex-row items-center gap-2">
-        <.panel_header phone={@phone} panel="results" title="Results" />
-        <.caption :if={@preview}>{@output} · {plural(@preview.total, "row")}{if @preview.total > length(@preview.rows), do: ", first #{length(@preview.rows)} shown"}</.caption>
+    <section class={"flex-col gap-2 p-4 " <> if(@phone, do: "flex-1", else: "h-[280px]")} aria-label="Results">
+      <div class="flex-row flex-wrap items-center justify-between gap-2">
+        <div class="flex-row items-center gap-2">
+          <.panel_header phone={@phone} panel="results" title="Results" />
+          <.caption :if={@total}>{@output} · {plural(@total, "row")}</.caption>
+        </div>
+        <div :if={@total} class="flex-row flex-wrap items-center gap-1">
+          <div :if={@grid} class="flex-row items-center gap-1">
+            <.caption>{page_range(@grid)}</.caption>
+            <.button variant={:quiet} size={touch(@phone, :sm)} icon="chevron-left" phx-click="page" phx-value-by="-1"
+              disabled={@grid.offset == 0} aria-label="Previous page" title="Previous page" />
+            <.button variant={:quiet} size={touch(@phone, :sm)} icon="chevron-right" phx-click="page" phx-value-by="1"
+              disabled={@grid.offset + length(@grid.rows) >= @grid.total} aria-label="Next page" title="Next page" />
+          </div>
+          <.button :for={{view, label, icon} <- [{"data", "Data", "table"}, {"profile", "Profile", "chart-column"}]}
+            size={touch(@phone, :sm)} icon={icon} phx-click="browse_view" phx-value-view={view}
+            aria-label={"Show #{String.downcase(label)}"}
+            class={if @browse.view == view, do: "border-primary bg-primary/12", else: ""}>{label}</.button>
+        </div>
       </div>
       <div :if={@node && multi?(@node)} class="flex-row gap-1">
         <.button :for={out <- Tools.outputs(@node.tool)} size={touch(@phone, :sm)} phx-click="show_output"
@@ -725,24 +903,89 @@ defmodule IxpipeApp.MainView do
         </.button>
       </div>
       <.caption :if={!@node}>Select a tool to see its results.</.caption>
-      <.caption :if={@node && !@preview}>Run the workflow to see this tool's results.</.caption>
-      <div :if={@preview} class="flex-col flex-1 overflow-scroll">
-        <table class="flex-col">
+      <.caption :if={@node && !@total}>Run the workflow to see this tool's results.</.caption>
+      <div :if={@grid} class="flex-col flex-1 overflow-scroll">
+        <table class="flex-col" aria-label="Rows">
           <tr class="flex-row py-1">
-            <th :for={column <- @preview.columns} class="w-[140px] px-2">
-              <.label class={if column in @preview.numeric, do: "text-right", else: ""}>{column}</.label>
+            <th :for={column <- @grid.columns} class="w-[140px] px-2">
+              <.button variant={:quiet} size={touch(@phone, :sm)} phx-click="sort" phx-value-column={column}
+                icon={sort_icon(@browse.sort, column)} aria-label={"Sort by #{column}"}
+                class={if column in @grid.numeric, do: "w-full px-0 justify-end", else: "w-full px-0"}>
+                <.label>{column}</.label>
+              </.button>
             </th>
           </tr>
           <div class="h-px bg-border" />
-          <tr :for={row <- @preview.rows} class="flex-row py-1">
-            <td :for={{value, column} <- Enum.zip(row, @preview.columns)} class="w-[140px] px-2">
-              <.body class={cell_class(value, column in @preview.numeric)}>{value}</.body>
+          <tr :for={row <- @grid.rows} class="flex-row py-1">
+            <td :for={{value, column} <- Enum.zip(row, @grid.columns)} class="w-[140px] px-2">
+              <.body class={cell_class(value, column in @grid.numeric)}>{value}</.body>
+            </td>
+          </tr>
+        </table>
+      </div>
+      <div :if={@profile} class="flex-col flex-1 overflow-scroll">
+        <table class="flex-col" aria-label="Profile">
+          <tr class="flex-row py-1">
+            <th :for={{label, width} <- profile_columns()} class={"#{width} px-2"}><.label>{label}</.label></th>
+          </tr>
+          <div class="h-px bg-border" />
+          <tr :for={column <- @profile} class="flex-row items-center py-1">
+            <td class="w-[140px] px-2"><.body>{column.name}</.body></td>
+            <td class="w-[120px] px-2"><.caption>{column.type}</.caption></td>
+            <td class="w-[100px] px-2"><.body class={if column.nulls == 0, do: "text-muted-foreground", else: ""}>{share(column.nulls, column.count)}</.body></td>
+            <td class="w-[80px] px-2"><.body>{column.distinct}</.body></td>
+            <td class="w-[240px] px-2"><.body>{profile_values(column)}</.body></td>
+            <td class="w-[120px] px-2">
+              <div :if={column.bins != []} class="flex-row items-end gap-1 h-[24px]"
+                aria-label={"Distribution of #{column.name}"}>
+                <div :for={h <- bar_heights(column.bins)} class={"w-[6px] h-[#{h}px] bg-muted-foreground"} />
+              </div>
             </td>
           </tr>
         </table>
       </div>
     </section>
     """
+  end
+
+  defp page_range(%{total: 0}), do: "No rows"
+
+  defp page_range(%{offset: offset, rows: rows}),
+    do: "Rows #{offset + 1}–#{offset + length(rows)}"
+
+  defp sort_icon({column, :asc}, column), do: "arrow-up"
+  defp sort_icon({column, :desc}, column), do: "arrow-down"
+  defp sort_icon(_sort, _column), do: nil
+
+  defp profile_columns,
+    do: [
+      {"Column", "w-[140px]"},
+      {"Type", "w-[120px]"},
+      {"Nulls", "w-[100px]"},
+      {"Distinct", "w-[80px]"},
+      {"Values", "w-[240px]"},
+      {"Distribution", "w-[120px]"}
+    ]
+
+  # "0", or "3 (2.5%)" of the rows.
+  defp share(0, _total), do: "0"
+
+  defp share(n, total),
+    do:
+      "#{n} (#{:erlang.float_to_binary(n * 100 / total, [:short])}%)"
+      |> String.replace(".0%", "%")
+
+  # A number's or date's range, or anything else's most common values.
+  defp profile_values(%{min: nil, max: nil, top: []}), do: "—"
+  defp profile_values(%{top: [], min: min, max: max}), do: "#{cell(min)} – #{cell(max)}"
+
+  defp profile_values(%{top: top}),
+    do: Enum.map_join(top, ", ", fn {value, n} -> "#{value} (#{n})" end)
+
+  # Bar heights in pixels, up to 24: an empty bin is a 1px baseline.
+  defp bar_heights(bins) do
+    top = Enum.max(bins)
+    for n <- bins, do: if(n == 0, do: 1, else: max(2, round(n * 24 / top)))
   end
 
   attr(:phone, :boolean, required: true)
@@ -812,7 +1055,7 @@ defmodule IxpipeApp.MainView do
       })
 
     ~H"""
-    <section class={"flex-col gap-2 p-4 " <> if(@phone, do: "flex-1", else: "h-[240px]")} aria-label="Messages">
+    <section class={"flex-col gap-2 p-4 " <> if(@phone, do: "flex-1", else: "h-[280px]")} aria-label="Messages">
       <div class="flex-row items-center gap-2">
         <.panel_header phone={@phone} panel="messages" title="Messages" />
       </div>
@@ -866,6 +1109,8 @@ defmodule IxpipeApp.MainView do
   attr(:formula_rows, :integer, required: true)
   attr(:dir, :string, required: true)
   attr(:phone, :boolean, default: false)
+  attr(:schema, :list, default: nil)
+  attr(:type_open, :integer, default: nil)
 
   defp properties(assigns) do
     ~H"""
@@ -879,7 +1124,8 @@ defmodule IxpipeApp.MainView do
       <.caption :if={@node && @node.tool.fields() == []}>This tool has no settings.</.caption>
       <form :if={@node} phx-change="config" aria-label="Settings" class="flex-col gap-3">
         <.field :for={field <- @node.tool.fields()} field={field} node={@node} drafts={@drafts}
-          error={@errors[field.key]} formula_rows={@formula_rows} dir={@dir} size={touch(@phone, :sm)} />
+          error={@errors[field.key]} errors={@errors} formula_rows={@formula_rows} dir={@dir}
+          size={touch(@phone, :sm)} schema={@schema} type_open={@type_open} />
       </form>
     </aside>
     """
@@ -892,6 +1138,70 @@ defmodule IxpipeApp.MainView do
   attr(:formula_rows, :integer, required: true)
   attr(:dir, :string, default: nil)
   attr(:size, :atom, default: :sm)
+  attr(:errors, :map, default: %{})
+  attr(:schema, :list, default: nil)
+  attr(:type_open, :integer, default: nil)
+
+  # Select's columns: a row per column (the last run's input columns, and
+  # any the config lists) with a keep checkbox, its name, its type and
+  # move up and down. The type opens a picker of common types and a field
+  # for any other.
+  defp field(%{field: %{type: :select}} = assigns) do
+    rows = Select.rows(assigns.node.config, assigns.schema || [])
+    # "New column" and "Not in the input" only mean something once there is
+    # both a list and a run's columns to compare.
+    notes? = assigns.schema != nil and assigns.node.config["columns"] not in [nil, []]
+
+    assigns =
+      Map.merge(assigns, %{rows: Enum.with_index(rows), last: length(rows) - 1, notes?: notes?})
+
+    ~H"""
+    <div class="flex-col gap-2" aria-label="Columns">
+      <.label>{@field.label}</.label>
+      <.empty_state :if={@rows == []} title="No columns yet">
+        Run the workflow to load this tool's columns.
+      </.empty_state>
+      <.caption :if={@schema == nil && @rows != []}>Run the workflow to load the input's columns.</.caption>
+      <div :for={{row, i} <- @rows} class="flex-col gap-1">
+        <div class="flex-row items-center gap-1">
+          <input type="checkbox" checked={row["keep"]} phx-click="select_keep" phx-value-index={i}
+            aria-label={"Keep #{row["name"]}"} />
+          <div class="flex-1 min-w-0">
+            <input name={"select_name_#{i}"} value={@drafts["select_name_#{i}"] || row["rename"] || row["name"]}
+              aria-label={"Name of #{row["name"]}"} class="w-full" />
+          </div>
+          <.button variant={:quiet} size={@size} phx-click="select_type_open" phx-value-index={i}
+            aria-label={"Type of #{row["name"]}"} title="Change type"
+            class={if row["type"], do: "border-primary bg-primary/12", else: ""}>
+            {row["type"] || row["input_type"] || "Type"}
+          </.button>
+          <.button variant={:quiet} size={@size} icon="arrow-up" phx-click="select_move" phx-value-index={i}
+            phx-value-by="-1" disabled={i == 0} aria-label={"Move #{row["name"]} up"} title="Move up" />
+          <.button variant={:quiet} size={@size} icon="arrow-down" phx-click="select_move" phx-value-index={i}
+            phx-value-by="1" disabled={i == @last} aria-label={"Move #{row["name"]} down"} title="Move down" />
+        </div>
+        <.caption :if={select_note(row, @notes?)} class="pl-6">{select_note(row, @notes?)}</.caption>
+        <div :if={@type_open == i} class="flex-col gap-1 pl-6">
+          <div class="flex-row flex-wrap gap-1">
+            <.button size={@size} phx-click="select_type" phx-value-index={i} phx-value-type=""
+              aria-label={"Keep #{row["name"]}'s type"}
+              class={if !row["type"], do: "border-primary bg-primary/12", else: ""}>
+              {row["input_type"] || "Unchanged"}
+            </.button>
+            <.button :for={type <- Select.common_types()} :if={type != row["input_type"]} size={@size}
+              phx-click="select_type" phx-value-index={i} phx-value-type={type}
+              aria-label={"Cast #{row["name"]} to #{type}"}
+              class={if row["type"] == type, do: "border-primary bg-primary/12", else: ""}>{type}</.button>
+          </div>
+          <input name={"select_type_#{i}"} value={@drafts["select_type_#{i}"] || ""}
+            placeholder="Another type, e.g. DECIMAL(10,4)" aria-label={"Another type for #{row["name"]}"} class="w-full" />
+          <.caption :if={@errors["select_type_#{i}"]} class="text-danger">{@errors["select_type_#{i}"]}</.caption>
+          <.caption :if={!@errors["select_type_#{i}"]}>A value that doesn't convert becomes NULL.</.caption>
+        </div>
+      </div>
+    </div>
+    """
+  end
 
   # A database tool's saved connection: the saved connections of its kind,
   # as choices, from connections.yaml in the workflows folder.
@@ -1013,7 +1323,24 @@ defmodule IxpipeApp.MainView do
     """
   end
 
+  # Select's new-columns policy defaults by the shape of its list.
+  defp chosen(%{key: "new_columns"}, %{tool: Select} = node), do: Select.new_columns(node.config)
   defp chosen(field, node), do: node.config[field.key] || hd(field.options)
+
+  # What a Select row changes, under it.
+  defp select_note(row, loaded?) do
+    [
+      row["missing"] && loaded? && "Not in the input",
+      row["new"] && loaded? && "New column",
+      row["rename"] && "Renamed from #{row["name"]}",
+      row["type"] && "#{row["input_type"] || "?"} → #{row["type"]}"
+    ]
+    |> Enum.filter(& &1)
+    |> case do
+      [] -> nil
+      notes -> Enum.join(notes, " · ")
+    end
+  end
 
   defp formula_lines(nil, _drafts), do: []
 
