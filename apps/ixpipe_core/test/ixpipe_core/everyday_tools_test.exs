@@ -369,19 +369,17 @@ defmodule IxpipeCore.EverydayToolsTest do
         AppendFields.run(%{"target" => t, "source" => s}, %{"limit" => 1}, ctx)
       end
 
-      log =
-        ExUnit.CaptureLog.capture_log(fn ->
-          warn =
-            AppendFields.run(
-              %{"target" => t, "source" => s},
-              %{"limit" => 1, "too_many" => "warn"},
-              ctx
-            )
+      warn =
+        AppendFields.run(
+          %{"target" => t, "source" => s},
+          %{"limit" => 1, "too_many" => "warn"},
+          ctx
+        )
 
-          assert Table.count(warn) == 4
-        end)
+      assert Table.count(warn) == 4
 
-      assert log =~ "node: The source has 2 rows, over the limit of 1"
+      assert [%{level: :warning, text: "The source has 2 rows, over the limit of 1." <> _}] =
+               Enum.filter(IxpipeCore.Context.messages(ctx), &(&1.level == :warning))
 
       allow =
         AppendFields.run(
@@ -391,6 +389,7 @@ defmodule IxpipeCore.EverydayToolsTest do
         )
 
       assert Table.count(allow) == 4
+      assert length(Enum.filter(IxpipeCore.Context.messages(ctx), &(&1.level == :warning))) == 1
     end
   end
 
