@@ -11,12 +11,16 @@ defmodule IxpipeCore.CLI do
   uses them. `--param` sets a parameter of a macro workflow run on its own,
   typed as the parameter declares.
 
+  A tool that fails stops only the tools downstream of it; every tool's
+  status, rows and messages (warnings and errors print under it) are
+  reported, and `--json` gives each tool's `status` and `messages`.
+
   `main/2` returns the exit code (0 ok, 1 the workflow failed, 2 usage) and
   never halts, so it is callable from `mix ixpipe.run` and the release's
   `bin/ixpipe-run`.
   """
 
-  alias IxpipeCore.{Config, Macro, Spec, Tools}
+  alias IxpipeCore.{Config, Macro, Run, Spec, Table, Tools}
 
   @usage """
   Usage:
@@ -66,9 +70,8 @@ defmodule IxpipeCore.CLI do
     with {:ok, spec} <- load(path, opts[:output_dir]),
          {:ok, params} <- params(spec, Keyword.get_values(opts, :param), path) do
       result =
-        with :ok <- make_output_dir(opts[:output_dir]),
-             {:ok, results} <- IxpipeCore.run(spec, params: params) do
-          {:ok, spec, results}
+        with :ok <- make_output_dir(opts[:output_dir]) do
+          {:ok, spec, IxpipeCore.execute(spec, params: params)}
         end
 
       ms = System.monotonic_time(:millisecond) - started
@@ -135,30 +138,51 @@ defmodule IxpipeCore.CLI do
     %{spec | nodes: nodes}
   end
 
-  defp report({:ok, spec, results}, ms, json, io) do
+  # Every tool's status, rows and messages: a failure skips only the tools
+  # downstream of it, so the rest still report.
+  defp report({:ok, spec, %Run{} = run}, ms, json, io) do
     # A tool with one output reports its rows; one with several reports each
-    # output's rows (results are keyed `node.output` for those).
+    # output's rows (tables are keyed `node.output` for those).
     nodes =
       for node <- spec.nodes do
-        base = %{"id" => node.id, "tool" => Tools.name(node.tool)}
+        status = run.nodes[node.id]
 
-        case Tools.outputs(node) do
-          [_] ->
-            Map.put(base, "rows", IxpipeCore.Table.count(results[node.id]))
+        base = %{
+          "id" => node.id,
+          "tool" => Tools.name(node.tool),
+          "status" => if(status == :failed, do: "failed", else: Atom.to_string(status)),
+          "rows" => nil,
+          "messages" =>
+            for(
+              %{node: id} = m <- run.messages,
+              id == node.id,
+              do: %{"level" => Atom.to_string(m.level), "text" => m.text, "detail" => m.detail}
+            )
+        }
 
-          outputs ->
-            counts = Map.new(outputs, &{&1, IxpipeCore.Table.count(results["#{node.id}.#{&1}"])})
+        case {status, Tools.outputs(node)} do
+          {:ok, [_]} ->
+            Map.put(base, "rows", Table.count(run.tables[node.id]))
 
+          {:ok, outputs} ->
+            counts = Map.new(outputs, &{&1, Table.count(run.tables["#{node.id}.#{&1}"])})
+            base |> Map.put("outputs", counts) |> Map.put("order", outputs)
+
+          _ ->
             base
-            |> Map.put("rows", nil)
-            |> Map.put("outputs", counts)
-            |> Map.put("order", outputs)
         end
+      end
+
+    error =
+      case Run.messages(run, :error) do
+        [] -> nil
+        [first | _] -> "#{first.node} failed: #{first.text}"
       end
 
     if json do
       nodes = Enum.map(nodes, &Map.delete(&1, "order"))
-      IO.puts(io, Jason.encode!(%{status: "ok", error: nil, ms: ms, nodes: nodes}))
+      status = if run.status == :ok, do: "ok", else: "error"
+      IO.puts(io, Jason.encode!(%{status: status, error: error, ms: ms, nodes: nodes}))
     else
       id_width = nodes |> Enum.map(&String.length(&1["id"])) |> Enum.max(fn -> 0 end)
       tool_width = nodes |> Enum.map(&String.length(&1["tool"])) |> Enum.max(fn -> 0 end)
@@ -168,18 +192,21 @@ defmodule IxpipeCore.CLI do
           io,
           "#{String.pad_trailing(id, id_width)}  #{String.pad_trailing(tool, tool_width)}  #{counts(node)}"
         )
+
+        for %{"level" => level, "text" => text} <- node["messages"],
+            level != "info",
+            do: IO.puts(io, "  #{level}: #{text}")
       end
 
-      IO.puts(io, "Run succeeded in #{ms} ms")
+      IO.puts(io, summary(run, ms))
     end
 
-    0
+    if run.status == :ok, do: 0, else: 1
   end
 
   defp report({:error, reason}, ms, json, io) do
     message =
       case reason do
-        {:node_failed, id, message} -> "#{id} failed: #{message}"
         reason when is_atom(reason) -> "Could not create the output directory: #{reason}"
         reason -> Spec.format_error(reason)
       end
@@ -203,6 +230,20 @@ defmodule IxpipeCore.CLI do
 
   defp plural(1, noun), do: "1 #{noun}"
   defp plural(n, noun), do: "#{n} #{noun}s"
+
+  defp summary(%Run{status: :failed} = run, _ms) do
+    [first | _] = Run.messages(run, :error)
+    "Run failed at #{Enum.join(Run.failed(run), ", ")}: #{first.text}"
+  end
+
+  defp summary(run, ms) do
+    case length(Run.messages(run, :warning)) do
+      0 -> "Run succeeded in #{ms} ms"
+      n -> "Run succeeded with #{plural(n, "warning")} in #{ms} ms"
+    end
+  end
+
+  defp counts(%{"status" => status}) when status != "ok", do: status
 
   defp counts(%{"outputs" => counts, "order" => order}),
     do: Enum.map_join(order, ", ", &"#{&1} #{plural(counts[&1], "row")}")

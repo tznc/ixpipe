@@ -106,7 +106,9 @@ defmodule IxpipeApp.MacroViewTest do
     Test.click(w, "Connect from orders")
     Test.click(w, "Connect to macro_1 rows")
     Test.click(w, "Run workflow")
-    assert Test.text(w) =~ "macro_1/f failed."
+    # The macro node fails, its error naming the inner tool.
+    assert Test.text(w) =~ "Failed at macro_1."
+    assert Test.text(w) =~ ~s(macro_1/f failed: Column "nope" isn't in the input.)
   end
 
   test "Open macro drills into the macro and the breadcrumb comes back", ctx do

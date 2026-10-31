@@ -39,8 +39,9 @@ defmodule IxpipeCore.Macro do
   ## Running
 
   The inner workflow runs through Runic in the same run's database, its
-  tables named under the node (`m/f.true`), and a failure names the inner
-  tool (`m/f`). A macro may use other macros, each `path` relative to its
+  tables named under the node (`m/f.true`). An inner failure fails the
+  node, naming the inner tool (`m/f failed: …`), and the inner tools'
+  warnings are the node's, each prefixed with its tool (`m/f: …`). A macro may use other macros, each `path` relative to its
   own file; one that uses itself, directly or not, is rejected.
 
   - **Batch** (`type: batch`): the node gets a `control` input. The macro
@@ -52,12 +53,23 @@ defmodule IxpipeCore.Macro do
     the `input` port, until that output is empty or `max` iterations ran
     (the node's `max_iterations` can lower or raise it). The iteration
     output holds the last iteration's rows; every other output unions the
-    iterations' by name; the extra `iterations` output reports how many ran.
+    iterations' by name; the extra `iterations` output reports how many ran, as does an info
+    message ("Ran 3 iterations").
   """
 
-  alias IxpipeCore.{Config, Context, Spec, Table, Tools}
+  alias IxpipeCore.{Config, Context, Run, Spec, Table, Tools}
   alias IxpipeCore.Tools.{MacroInput, MacroOutput}
   import IxpipeCore.Duck, only: [ident: 1, literal: 1]
+
+  defmodule Failed do
+    @moduledoc false
+    # Raised when a macro's inner tool fails: `text` and `detail` become the
+    # macro node's error, both naming the inner tool.
+    defexception [:text, :detail]
+
+    @impl true
+    def message(%{detail: detail}), do: detail
+  end
 
   defstruct [
     :path,
@@ -436,9 +448,8 @@ defmodule IxpipeCore.Macro do
   end
 
   defp standard(macro, values, inputs, config, ctx) do
-    with {:ok, outs} <- once(macro, values, inputs, config, ctx, "#{ctx.id}/") do
-      emit(ctx, Map.new(outs, fn {name, table} -> {name, [table]} end), single?(macro))
-    end
+    {:ok, outs} = once(macro, values, inputs, config, ctx, "#{ctx.id}/")
+    emit(ctx, Map.new(outs, fn {name, table} -> {name, [table]} end), single?(macro))
   end
 
   defp batch(macro, values, inputs, config, ctx) do
@@ -451,25 +462,16 @@ defmodule IxpipeCore.Macro do
     # columns, and none of its rows.
     runs = if batches == [], do: [%{}], else: batches
 
-    runs
-    |> Enum.with_index(1)
-    |> Enum.reduce_while({:ok, %{}}, fn {row, i}, {:ok, acc} ->
-      values = Map.merge(values, coerce(row, macro.params))
+    outs =
+      runs
+      |> Enum.with_index(1)
+      |> Enum.reduce(%{}, fn {row, i}, acc ->
+        values = Map.merge(values, coerce(row, macro.params))
+        {:ok, outs} = once(macro, values, inputs, config, ctx, "#{ctx.id}/#{i}/")
+        Map.merge(acc, Map.new(outs, &{elem(&1, 0), [elem(&1, 1)]}), fn _, a, b -> a ++ b end)
+      end)
 
-      case once(macro, values, inputs, config, ctx, "#{ctx.id}/#{i}/") do
-        {:ok, outs} ->
-          {:cont,
-           {:ok,
-            Map.merge(acc, Map.new(outs, &{elem(&1, 0), [elem(&1, 1)]}), fn _, a, b -> a ++ b end)}}
-
-        failed ->
-          {:halt, failed}
-      end
-    end)
-    |> case do
-      {:ok, outs} -> emit(ctx, outs, single?(macro), batches == [])
-      failed -> failed
-    end
+    emit(ctx, outs, single?(macro), batches == [])
   end
 
   # One batch per distinct combination of the parameter columns, in the
@@ -518,6 +520,8 @@ defmodule IxpipeCore.Macro do
       acc = Map.merge(acc, Map.new(outs, &{elem(&1, 0), [elem(&1, 1)]}), fn _, a, b -> a ++ b end)
 
       if Table.count(again) == 0 or i >= max do
+        Context.info(ctx, "Ran #{IxpipeCore.plural(i, "iteration")}")
+
         ctx
         |> emit(Map.put(acc, output, [again]), false)
         |> Map.put("iterations", Context.table(ctx, "iterations", iterations: [i]))
@@ -528,14 +532,23 @@ defmodule IxpipeCore.Macro do
   end
 
   # Runs the inner workflow once, its tables under `prefix`: the macro's
-  # outputs by port name, or the inner tool that failed.
+  # outputs by port name. Inner warnings become the node's; an inner
+  # failure raises `Failed`, naming the inner tool.
   defp once(macro, values, inputs, config, ctx, prefix) do
     spec = instantiate(macro, values, inputs, config)
-    results = IxpipeCore.execute(spec, ctx.db, prefix)
+    run = IxpipeCore.execute(spec, db: ctx.db, prefix: prefix)
 
-    case Enum.find(Map.values(results), &match?({:failed, _, _}, &1)) do
-      nil -> {:ok, Map.new(macro.outputs, fn {name, id} -> {name, results[id]} end)}
-      failed -> failed
+    for message <- Run.messages(run, :warning),
+        do: Context.warn(ctx, "#{message.node}: #{message.text}")
+
+    case Run.messages(run, :error) do
+      [] ->
+        {:ok, Map.new(macro.outputs, fn {name, id} -> {name, run.tables[id]} end)}
+
+      [error | _] ->
+        raise Failed,
+          text: "#{error.node} failed: #{error.text}",
+          detail: "#{error.node} failed: #{error.detail || error.text}"
     end
   end
 

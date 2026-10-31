@@ -6,7 +6,7 @@ defmodule IxpipeCore.Tools.OutputSqlite do
   """
   @behaviour IxpipeCore.Tool
 
-  alias IxpipeCore.{Database, Sqlite, Table}
+  alias IxpipeCore.{Context, Database, Sqlite, Table}
   alias IxpipeCore.Tools.InputSqlite
 
   @impl true
@@ -43,7 +43,7 @@ defmodule IxpipeCore.Tools.OutputSqlite do
     ]
 
   @impl true
-  def run(%{"in" => t}, %{"table" => table} = config, _ctx) do
+  def run(%{"in" => t}, %{"table" => table} = config, ctx) do
     name = Database.quote_name(table)
     {names, rows} = Table.values(t)
     # In the table's column order, which the inserts follow; dtypes/1 is a map.
@@ -68,8 +68,16 @@ defmodule IxpipeCore.Tools.OutputSqlite do
            "INSERT INTO #{name} VALUES (#{marks})",
            rows
          ) do
-      :ok -> t
-      {:error, reason} -> raise "SQLite: #{reason}"
+      :ok ->
+        Context.info(
+          ctx,
+          "Wrote #{IxpipeCore.plural(length(rows), "row")} to table #{table} in #{InputSqlite.path!(config)}."
+        )
+
+        t
+
+      {:error, reason} ->
+        raise "SQLite: #{reason}"
     end
   end
 

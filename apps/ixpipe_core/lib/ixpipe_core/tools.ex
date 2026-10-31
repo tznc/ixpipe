@@ -25,6 +25,16 @@ defmodule IxpipeCore.Tools do
     "text_to_columns" => IxpipeCore.Tools.TextToColumns,
     "regex" => IxpipeCore.Tools.Regex,
     "data_cleansing" => IxpipeCore.Tools.DataCleansing,
+    "record_id" => IxpipeCore.Tools.RecordId,
+    "running_total" => IxpipeCore.Tools.RunningTotal,
+    "tile" => IxpipeCore.Tools.Tile,
+    "generate_rows" => IxpipeCore.Tools.GenerateRows,
+    "imputation" => IxpipeCore.Tools.Imputation,
+    "auto_field" => IxpipeCore.Tools.AutoField,
+    "find_replace" => IxpipeCore.Tools.FindReplace,
+    "append_fields" => IxpipeCore.Tools.AppendFields,
+    "join_multiple" => IxpipeCore.Tools.JoinMultiple,
+    "fuzzy_match" => IxpipeCore.Tools.FuzzyMatch,
     "macro_input" => IxpipeCore.Tools.MacroInput,
     "macro_output" => IxpipeCore.Tools.MacroOutput,
     "macro" => IxpipeCore.Tools.Macro
@@ -61,6 +71,13 @@ defmodule IxpipeCore.Tools do
   defp exports?(tool, fun, arity) do
     Code.ensure_loaded(tool)
     function_exported?(tool, fun, arity)
+  end
+
+  @doc "The input ports a node of `tool` may leave unconnected; `[]` unless it declares some."
+  @spec optional_inputs(module()) :: [String.t()]
+  def optional_inputs(tool) do
+    Code.ensure_loaded(tool)
+    if function_exported?(tool, :optional_inputs, 0), do: tool.optional_inputs(), else: []
   end
 
   @spec name(module()) :: String.t()

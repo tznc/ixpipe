@@ -68,6 +68,30 @@ defmodule IxpipeApp.RibbonViewTest do
     assert [%{"a" => %{"phx-pick-file" => "use_macro"}}] = UI.find(w, "Use a macro")
   end
 
+  test "the everyday tools sit in Preparation, Join and Transform, humanised", %{w: w} do
+    Test.click(w, "Preparation tab")
+    assert attrs(w, "Sequence")["role"] == "group"
+
+    for label <- [
+          "Record ID",
+          "Tile",
+          "Generate rows",
+          "Imputation",
+          "Auto field"
+        ],
+        do: assert(Test.text(w) =~ label, label)
+
+    Test.click(w, "Join tab")
+    assert attrs(w, "Match")["role"] == "group"
+
+    for label <- ["Find replace", "Append fields", "Join multiple", "Fuzzy match"],
+        do: assert(Test.text(w) =~ label, label)
+
+    # With Summarize, as Alteryx's Transform has it.
+    Test.click(w, "Transform tab")
+    assert Test.text(w) =~ "Running total"
+  end
+
   test "a tool added from a tab lands on the canvas", %{w: w, pid: pid} do
     Test.click(w, "In/Out tab")
     assert Test.text(w) =~ "Input"

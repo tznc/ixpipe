@@ -128,7 +128,7 @@ defmodule IxpipeCore.MacroTest do
       assert "g/f.true" in names
     end
 
-    test "an inner failure names the inner tool", %{dir: dir} do
+    test "an inner failure fails the macro node, naming the inner tool", %{dir: dir} do
       write(dir, "bad.yaml", """
       nodes:
         - {id: rows, tool: macro_input}
@@ -143,8 +143,40 @@ defmodule IxpipeCore.MacroTest do
           - {id: m, tool: macro, inputs: {rows: orders}, config: {path: bad.yaml}}
         """)
 
-      assert {:error, {:node_failed, "m/f", message}} = IxpipeCore.run(spec)
-      assert message =~ "nope"
+      assert {:error, {:node_failed, "m", message}} = IxpipeCore.run(spec)
+      assert message =~ ~r/^m\/f failed: .*nope/s
+
+      run = IxpipeCore.execute(spec)
+      assert run.nodes == %{"orders" => :ok, "m" => :failed}
+      assert [%{node: "m", text: text, detail: detail}] = IxpipeCore.Run.messages(run, :error)
+      assert text =~ ~s(m/f failed: Column "nope" isn't in the input.)
+      assert detail =~ ~r/^m\/f failed: .*nope/s
+    end
+
+    test "inner warnings are the macro node's, naming the inner tool", %{dir: dir} do
+      write(dir, "nulls.yaml", """
+      nodes:
+        - {id: rows, tool: macro_input}
+        - {id: g, tool: formula, inputs: {in: rows}, config: {formulas: [{as: x, expr: "NULL"}]}}
+        - {id: out, tool: macro_output, inputs: {in: g}}
+      """)
+
+      {:ok, spec} =
+        load(dir, """
+        nodes:
+          - #{orders()}
+          - {id: m, tool: macro, inputs: {rows: orders}, config: {path: nulls.yaml}}
+        """)
+
+      run = IxpipeCore.execute(spec)
+      assert run.status == :ok
+
+      assert [%{node: "m", text: "m/g: Formula \"x\" is NULL on every row." <> _}] =
+               IxpipeCore.Run.messages(run, :warning)
+
+      # Only the macro node's own rows and time: inner info stays inside.
+      assert [%{text: "4 rows in " <> _}] =
+               for(%{node: "m"} = m <- IxpipeCore.Run.messages(run, :info), do: m)
     end
 
     test "a macro input checks the columns it expects", %{dir: dir} do
@@ -161,8 +193,8 @@ defmodule IxpipeCore.MacroTest do
           - {id: m, tool: macro, inputs: {rows: orders}, config: {path: needs.yaml}}
         """)
 
-      assert {:error, {:node_failed, "m/rows", message}} = IxpipeCore.run(spec)
-      assert message =~ "colour"
+      assert {:error, {:node_failed, "m", message}} = IxpipeCore.run(spec)
+      assert message =~ ~r/^m\/rows failed: .*colour/s
     end
 
     test "macros nest, each relative to its own folder", %{dir: dir} do
@@ -435,6 +467,21 @@ defmodule IxpipeCore.MacroTest do
       assert Table.to_columns(results["s"])["amount"] == [6, 2, 7, 6]
       assert Table.count(results["m.again"]) == 0
       assert Table.to_columns(results["m.iterations"]) == %{"iterations" => [3]}
+    end
+
+    test "reports the iterations as a message", %{dir: dir} do
+      write(dir, "halve.yaml", @halve)
+
+      {:ok, spec} =
+        load(dir, """
+        nodes:
+          - #{orders()}
+          - {id: m, tool: macro, inputs: {rows: orders}, config: {path: halve.yaml}}
+        """)
+
+      run = IxpipeCore.execute(spec)
+      infos = for %{node: "m", text: text} <- IxpipeCore.Run.messages(run, :info), do: text
+      assert "Ran 3 iterations" in infos
     end
 
     test "stops at the maximum, which the node can lower", %{dir: dir} do

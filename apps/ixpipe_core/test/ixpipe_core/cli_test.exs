@@ -50,7 +50,8 @@ defmodule IxpipeCore.CLITest do
 
     assert %{"status" => "ok", "error" => nil, "ms" => ms, "nodes" => nodes} = Jason.decode!(out)
     assert is_integer(ms)
-    assert %{"id" => "orders", "tool" => "input_csv", "rows" => 4} = hd(nodes)
+    assert %{"id" => "orders", "tool" => "input_csv", "rows" => 4, "status" => "ok"} = hd(nodes)
+    assert [%{"level" => "info", "text" => "4 rows in " <> _}] = hd(nodes)["messages"]
     assert Enum.map(nodes, & &1["id"]) == ["orders", "big", "out"]
   end
 
@@ -75,7 +76,51 @@ defmodule IxpipeCore.CLITest do
   test "a failing tool fails the run with its id", %{dir: dir} do
     path = workflow(dir, "nodes: [{id: orders, tool: input_csv, config: {path: nope.csv}}]")
     assert {1, out} = cli(["run", path])
-    assert out =~ "orders failed:"
+    assert out =~ "Run failed at orders: The file"
+    assert out =~ "doesn't exist. Choose a file that does."
+  end
+
+  test "a partial failure reports every tool's status and messages", %{dir: dir} do
+    path =
+      workflow(dir, """
+      nodes:
+        - {id: orders, tool: input_csv, config: {path: orders.csv}}
+        - {id: bad, tool: filter, inputs: {in: orders}, config: {expr: "nope > 1"}}
+        - {id: after, tool: sort, inputs: {in: bad.true}, config: {by: [id]}}
+        - {id: fine, tool: sort, inputs: {in: orders}, config: {by: [id]}}
+      """)
+
+    assert {1, out} = cli(["run", path])
+    assert out =~ ~r/orders\s+input_csv\s+4 rows/
+    assert out =~ ~r/bad\s+filter\s+failed/
+    assert out =~ ~s(  error: Column "nope" isn't in the input.)
+    assert out =~ ~r/after\s+sort\s+skipped/
+    assert out =~ ~r/fine\s+sort\s+4 rows/
+
+    assert {1, json} = cli(["run", path, "--json"])
+    assert %{"status" => "error", "error" => error, "nodes" => nodes} = Jason.decode!(json)
+    assert error =~ "bad failed: Column"
+    by_id = Map.new(nodes, &{&1["id"], &1})
+    assert by_id["fine"]["status"] == "ok"
+    assert by_id["fine"]["rows"] == 4
+    assert by_id["after"]["status"] == "skipped"
+    assert by_id["after"]["rows"] == nil
+
+    assert [%{"level" => "error", "text" => "Column" <> _, "detail" => "Binder Error" <> _}] =
+             by_id["bad"]["messages"]
+  end
+
+  test "warnings print under their tool and count in the summary", %{dir: dir} do
+    path =
+      workflow(dir, """
+      nodes:
+        - {id: orders, tool: input_csv, config: {path: orders.csv}}
+        - {id: f, tool: formula, inputs: {in: orders}, config: {formulas: [{as: x, expr: "amount * NULL"}]}}
+      """)
+
+    assert {0, out} = cli(["run", path])
+    assert out =~ ~s(  warning: Formula "x" is NULL on every row.)
+    assert out =~ ~r/Run succeeded with 1 warning in \d+ ms/
   end
 
   test "validate checks without running", %{dir: dir} do
@@ -155,6 +200,27 @@ defmodule IxpipeCore.CLITest do
 
       assert {2, out} = cli(["run", path, "--param", "threshold=lots"])
       assert out =~ "threshold: Enter a whole number"
+    end
+
+    test "--param with --json gives each tool's status and messages", %{dir: dir} do
+      path = Path.join(dir, "big.yaml")
+      assert {0, json} = cli(["run", path, "--param", "threshold=40", "--json"])
+      %{"status" => "ok", "nodes" => nodes} = Jason.decode!(json)
+      big = Enum.find(nodes, &(&1["id"] == "big"))
+      assert %{"status" => "ok", "rows" => 1, "messages" => [%{"level" => "info"}]} = big
+    end
+
+    test "a failure inside a macro fails its node, naming the inner tool", %{dir: dir} do
+      path =
+        workflow(dir, """
+        nodes:
+          - {id: orders, tool: input_csv, config: {path: orders.csv}}
+          - {id: m, tool: macro, inputs: {rows: orders}, config: {path: big.yaml, threshold: nope}}
+        """)
+
+      assert {1, out} = cli(["run", path])
+      assert out =~ ~r/m\s+macro\s+failed/
+      assert out =~ "error: m/f failed: "
     end
   end
 end

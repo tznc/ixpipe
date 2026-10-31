@@ -29,6 +29,11 @@ defmodule IxpipeCore.Tool do
 
   @callback inputs() :: [String.t()]
   @doc """
+  The ports of `inputs/0` a node may leave unconnected; `run/3` then gets
+  no table for them. Tools without it need every port.
+  """
+  @callback optional_inputs() :: [String.t()]
+  @doc """
   The tool's outputs, when it has more than one (Filter's `true` and
   `false`). `run/3` then returns a map of output name to table. Tools
   without it have one output, `out`.
@@ -42,7 +47,7 @@ defmodule IxpipeCore.Tool do
   @callback inputs(IxpipeCore.Spec.Node.t()) :: [String.t()]
   @callback outputs(IxpipeCore.Spec.Node.t()) :: [String.t()]
   @callback fields(IxpipeCore.Spec.Node.t()) :: [field()]
-  @optional_callbacks outputs: 0, inputs: 1, outputs: 1, fields: 1
+  @optional_callbacks outputs: 0, optional_inputs: 0, inputs: 1, outputs: 1, fields: 1
   @doc "The tool's settings, in the order an editor shows them."
   @callback fields() :: [field()]
   @doc """
