@@ -40,8 +40,8 @@ defmodule IxpipeCore.Edit do
   @spec set_config(Spec.t(), String.t(), String.t(), String.t()) ::
           {:ok, Spec.t()} | {:error, String.t()}
   def set_config(spec, id, key, text) do
-    with %Spec.Node{tool: tool} <- Enum.find(spec.nodes, &(&1.id == id)),
-         %{} = field <- Enum.find(tool.fields(), &(&1.key == key)),
+    with %Spec.Node{} = node <- Enum.find(spec.nodes, &(&1.id == id)),
+         %{} = field <- Enum.find(IxpipeCore.Tools.fields(node), &(&1.key == key)),
          {:ok, value} <- IxpipeCore.Config.parse(field, text) do
       config = fn config ->
         if value == nil, do: Map.delete(config, key), else: Map.put(config, key, value)

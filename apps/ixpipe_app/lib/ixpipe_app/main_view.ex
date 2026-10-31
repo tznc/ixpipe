@@ -9,7 +9,7 @@ defmodule IxpipeApp.MainView do
   use Baguette.View
   import IxpipeApp.Components
 
-  alias IxpipeCore.{Config, Connections, Edit, Spec, Table, Tools}
+  alias IxpipeCore.{Config, Connections, Edit, Macro, Spec, Table, Tools}
 
   @node_width 200
   @port_y 24
@@ -58,7 +58,9 @@ defmodule IxpipeApp.MainView do
      ]},
     {"parse", "Parse", [{"Split", ~w(text_to_columns regex)}]},
     {"transform", "Transform",
-     [{"Aggregate", ~w(summarize running_total)}, {"Reshape", ~w(cross_tab transpose)}]}
+     [{"Aggregate", ~w(summarize running_total)}, {"Reshape", ~w(cross_tab transpose)}]},
+    # Macro tools are added here; a macro itself is used with "Use a macro…".
+    {"macros", "Macros", [{"Macros", ~w(macro_input macro_output)}]}
   ]
 
   def mount(args) do
@@ -92,7 +94,10 @@ defmodule IxpipeApp.MainView do
       pane: "canvas",
       panel: "results",
       level: "all",
-      run: nil
+      run: nil,
+      # The workflows a macro was opened from, the nearest first, each as it
+      # was left: `%{path, spec, past, future, selected}`.
+      trail: []
     }
 
     case args[:path] do
@@ -116,10 +121,13 @@ defmodule IxpipeApp.MainView do
         Create one with New workflow. Workflows are saved in {@dir}.
       </.empty_state>
       <ul :if={@files != []} aria-label="Workflows" class="flex-col gap-1">
-        <li :for={{file, modified} <- @files} class="flex-row items-center justify-between gap-3">
-          <.button variant={:quiet} size={touch(@phone)} phx-click="open" phx-value-file={file} aria-label={"Open #{file}"}>
-            {file}
-          </.button>
+        <li :for={{file, modified, macro} <- @files} class="flex-row items-center justify-between gap-3">
+          <div class="flex-row items-center gap-2">
+            <.button variant={:quiet} size={touch(@phone)} phx-click="open" phx-value-file={file} aria-label={"Open #{file}"}>
+              {file}
+            </.button>
+            <div :if={macro} aria-label={"#{file} is a macro"}><.status_badge>Macro</.status_badge></div>
+          </div>
           <.caption>{modified}</.caption>
         </li>
       </ul>
@@ -139,7 +147,7 @@ defmodule IxpipeApp.MainView do
       phx-window-resize="resize">
       <div class={"flex-row items-center justify-between gap-3 " <> if(@phone, do: "px-4 py-1", else: "px-4 py-3")}>
         <div class={if @phone, do: "flex-col flex-1 min-w-0", else: "flex-col gap-1"}>
-          <.breadcrumb crumbs={[{"Workflows", "back"}, Path.basename(@path)]} touch={@phone} />
+          <.breadcrumb crumbs={crumbs(@trail, @path)} touch={@phone} />
           <.title>{@spec.name || Path.rootname(Path.basename(@path))}</.title>
         </div>
         <%!-- On a phone, Save and Run keep their place as icon-only buttons. --%>
@@ -172,6 +180,8 @@ defmodule IxpipeApp.MainView do
           <.ribbon_group :for={{group, tools} <- ribbon_groups(@tab)} label={group}>
             <.button :for={tool <- tools} size={touch(@phone, :sm)} variant={:quiet} phx-click="add" phx-value-tool={tool}
               icon={tool_icon(tool)} aria-label={"Add #{tool}"}>{command_label(group, tool)}</.button>
+            <.button :if={group == "Macros"} size={touch(@phone, :sm)} variant={:quiet} phx-pick-file="use_macro"
+              accept="yaml" icon="package" aria-label="Use a macro">Use a macro…</.button>
           </.ribbon_group>
         <% end %>
       </.ribbon>
@@ -201,19 +211,19 @@ defmodule IxpipeApp.MainView do
                 phx-value-id={node.id} aria-label={"Remove #{node.id}"}>Remove</.button>
             </div>
             <div class="flex-row flex-wrap items-center gap-2">
-              <.caption>{tool_label(Tools.name(node.tool))}</.caption>
+              <.caption>{node_label(node)}</.caption>
               <.status_badge :if={@rows[node.id]} tone={:success}>{plural(@rows[node.id], "row")}</.status_badge>
               <.run_badge run={@run} id={node.id} />
             </div>
             <div :if={multi?(node)} class="flex-row flex-wrap gap-1">
-              <.status_badge :for={out <- Tools.outputs(node.tool)} :if={@rows["#{node.id}.#{out}"]}
+              <.status_badge :for={out <- Tools.outputs(node)} :if={@rows["#{node.id}.#{out}"]}
                 tone={:success}>{out} · {plural(@rows["#{node.id}.#{out}"], "row")}</.status_badge>
             </div>
             <%!-- Inputs and outputs on their own labelled rows: a join's left and
               right inputs are not its left and right outputs. --%>
-            <div :if={!compact?(@zoom) && node.tool.inputs() != []} class="flex-row flex-wrap items-center gap-1">
+            <div :if={!compact?(@zoom) && Tools.inputs(node) != []} class="flex-row flex-wrap items-center gap-1">
               <.caption class="w-[28px]">In</.caption>
-              <.button :for={port <- node.tool.inputs()} size={:sm} phx-click="connect_to"
+              <.button :for={port <- Tools.inputs(node)} size={:sm} phx-click="connect_to"
                 phx-value-id={node.id} phx-value-port={port} aria-label={"Connect to #{node.id} #{port}"}>
                 {port}
               </.button>
@@ -262,6 +272,58 @@ defmodule IxpipeApp.MainView do
   end
 
   def handle_event("back", _values, assigns), do: {:noreply, home(assigns)}
+
+  # A breadcrumb back to a workflow a macro was opened from, as it was left.
+  def handle_event("return_" <> level, _values, assigns) do
+    [parent | rest] = Enum.drop(assigns.trail, String.to_integer(level))
+
+    assigns = %{
+      restore(assigns, parent.spec)
+      | path: parent.path,
+        past: parent.past,
+        future: parent.future,
+        trail: rest
+    }
+
+    {:noreply, select(assigns, parent.selected)}
+  end
+
+  # Opens the selected macro's workflow, keeping this one to come back to.
+  def handle_event("open_macro", _values, assigns) do
+    case Enum.find(assigns.spec.nodes, &(&1.id == assigns.selected)) do
+      %{macro: %Macro{path: path}} ->
+        here = Map.take(assigns, [:path, :spec, :past, :future, :selected])
+        trail = [here | assigns.trail]
+
+        case open(assigns, path) do
+          %{spec: nil} = home -> {:noreply, home}
+          opened -> {:noreply, select(%{opened | trail: trail, past: [], future: []}, nil)}
+        end
+
+      _ ->
+        {:noreply, assigns}
+    end
+  end
+
+  # Adds a node for the macro picked, its path relative to this workflow.
+  def handle_event("use_macro", %{"path" => path}, assigns) do
+    at = %{
+      "x" => 40 + 30 * length(assigns.spec.nodes),
+      "y" => 40 + 30 * length(assigns.spec.nodes)
+    }
+
+    dir = Path.dirname(assigns.path)
+
+    assigns =
+      edit(assigns, fn spec ->
+        spec = Edit.add_node(spec, "macro", at)
+        id = List.last(spec.nodes).id
+        {:ok, spec} = Edit.set_config(spec, id, "path", Path.relative_to(path, dir))
+        Macro.attach(spec, dir, [Path.expand(assigns.path)])
+      end)
+
+    {:noreply, select(assigns, List.last(assigns.spec.nodes).id)}
+  end
 
   def handle_event("save", _values, assigns) do
     File.write!(assigns.path, Spec.to_yaml(assigns.spec))
@@ -487,7 +549,9 @@ defmodule IxpipeApp.MainView do
     files =
       for file <- assigns.dir |> File.ls!() |> Enum.sort(),
           String.ends_with?(file, ".yaml"),
-          do: {file, modified(Path.join(assigns.dir, file))}
+          do:
+            {file, modified(Path.join(assigns.dir, file)),
+             Macro.file?(Path.join(assigns.dir, file))}
 
     %{
       assigns
@@ -499,12 +563,13 @@ defmodule IxpipeApp.MainView do
         toast: nil,
         rows: %{},
         run: nil,
-        pane: "canvas"
+        pane: "canvas",
+        trail: []
     }
   end
 
   defp open(assigns, path) do
-    case path |> File.read!() |> Spec.decode() do
+    case path |> File.read!() |> Spec.decode(path: path) do
       {:ok, spec} ->
         %{assigns | spec: place(spec), path: path, error: nil, status: nil, rows: %{}, run: nil}
 
@@ -585,9 +650,15 @@ defmodule IxpipeApp.MainView do
   # why and leaves the workflow as it was.
   defp configure(assigns, key, text, draft) do
     drafts = if draft, do: Map.put(assigns.drafts, key, draft), else: assigns.drafts
+    macro? = key == "path" and match?(%{tool: Tools.Macro}, selected(assigns))
+    dir = Path.dirname(assigns.path)
+    # A macro's path is kept relative to this workflow, and reloads it.
+    text = if macro?, do: Path.relative_to(text, dir), else: text
 
     case Edit.set_config(assigns.spec, assigns.selected, key, text) do
       {:ok, spec} ->
+        spec = if macro?, do: Macro.attach(spec, dir, [Path.expand(assigns.path)]), else: spec
+
         assigns = edit(assigns, fn _ -> spec end, {:config, assigns.selected, key})
         %{assigns | drafts: drafts, errors: Map.delete(assigns.errors, key)}
 
@@ -595,6 +666,8 @@ defmodule IxpipeApp.MainView do
         %{assigns | drafts: drafts, errors: Map.put(assigns.errors, key, message)}
     end
   end
+
+  defp selected(assigns), do: Enum.find(assigns.spec.nodes, &(&1.id == assigns.selected))
 
   defp formula_rows(assigns) do
     node = Enum.find(assigns.spec.nodes, &(&1.id == assigns.selected))
@@ -628,19 +701,19 @@ defmodule IxpipeApp.MainView do
     by_id = Map.new(spec.nodes, &{&1.id, &1})
 
     for node <- spec.nodes,
-        {port, in_slot} <- Enum.with_index(node.tool.inputs()),
+        {port, in_slot} <- Enum.with_index(Tools.inputs(node)),
         ref = node.inputs[port],
         {from, output} = Spec.source(ref || ""),
         source = by_id[from],
-        outputs = Tools.outputs(source.tool),
+        outputs = Tools.outputs(source),
         do: {source, node, Enum.find_index(outputs, &(&1 == output)) || 0, in_slot}
   end
 
-  defp multi?(node), do: length(Tools.outputs(node.tool)) > 1
+  defp multi?(node), do: length(Tools.outputs(node)) > 1
 
   # A connector per output: `{label, wire source, accessible name}`.
   defp connectors(node) do
-    case Tools.outputs(node.tool) do
+    case Tools.outputs(node) do
       [_] -> [{"out", node.id, "Connect from #{node.id}"}]
       outs -> for out <- outs, do: {out, "#{node.id}.#{out}", "Connect from #{node.id} #{out}"}
     end
@@ -648,7 +721,7 @@ defmodule IxpipeApp.MainView do
 
   # The run result Results shows for `node`: its own, or the chosen output.
   defp output_key(node, chosen) do
-    case Tools.outputs(node.tool) do
+    case Tools.outputs(node) do
       [_] -> node.id
       [first | _] = outs -> "#{node.id}.#{if chosen in outs, do: chosen, else: first}"
     end
@@ -718,7 +791,7 @@ defmodule IxpipeApp.MainView do
         <.caption :if={@preview}>{@output} · {plural(@preview.total, "row")}{if @preview.total > length(@preview.rows), do: ", first #{length(@preview.rows)} shown"}</.caption>
       </div>
       <div :if={@node && multi?(@node)} class="flex-row gap-1">
-        <.button :for={out <- Tools.outputs(@node.tool)} size={touch(@phone, :sm)} phx-click="show_output"
+        <.button :for={out <- Tools.outputs(@node)} size={touch(@phone, :sm)} phx-click="show_output"
           phx-value-output={out} aria-label={"Show #{out} output"}
           class={if @output == "#{@node.id}.#{out}", do: "border-primary bg-primary/12", else: ""}>
           {out}
@@ -874,11 +947,19 @@ defmodule IxpipeApp.MainView do
       <.empty_state :if={!@node} title="Nothing selected">Select a tool to configure it.</.empty_state>
       <div :if={@node} class="flex-col gap-1">
         <.section>{@node.id}</.section>
-        <.caption>{tool_label(Tools.name(@node.tool))}</.caption>
+        <.caption>{node_label(@node)}</.caption>
       </div>
-      <.caption :if={@node && @node.tool.fields() == []}>This tool has no settings.</.caption>
+      <.callout :if={@node && match?({:error, _}, @node.macro)} tone={:danger} title="This macro can't load.">
+        {Macro.format_error(elem(@node.macro, 1))}. Choose another macro file.
+      </.callout>
+      <div :if={@node && match?(%Macro{}, @node.macro)} class="flex-row">
+        <.button size={touch(@phone, :sm)} icon="external-link" phx-click="open_macro" aria-label="Open macro">
+          Open macro
+        </.button>
+      </div>
+      <.caption :if={@node && Tools.fields(@node) == []}>This tool has no settings.</.caption>
       <form :if={@node} phx-change="config" aria-label="Settings" class="flex-col gap-3">
-        <.field :for={field <- @node.tool.fields()} field={field} node={@node} drafts={@drafts}
+        <.field :for={field <- Tools.fields(@node)} field={field} node={@node} drafts={@drafts}
           error={@errors[field.key]} formula_rows={@formula_rows} dir={@dir} size={touch(@phone, :sm)} />
       </form>
     </aside>
@@ -1020,7 +1101,7 @@ defmodule IxpipeApp.MainView do
   defp formula_lines(node, drafts) do
     case drafts["formulas"] do
       nil ->
-        field = Enum.find(node.tool.fields(), &(&1.key == "formulas"))
+        field = Enum.find(Tools.fields(node), &(&1.key == "formulas"))
 
         node.config["formulas"]
         |> then(&Config.format(field, &1))
@@ -1069,9 +1150,24 @@ defmodule IxpipeApp.MainView do
     "find_replace" => "Find replace",
     "append_fields" => "Append fields",
     "join_multiple" => "Join multiple",
-    "fuzzy_match" => "Fuzzy match"
+    "fuzzy_match" => "Fuzzy match",
+    "macro_input" => "Macro input",
+    "macro_output" => "Macro output"
   }
   defp tool_label(tool), do: Map.get_lazy(@labels, tool, fn -> String.capitalize(tool) end)
+
+  # A macro node names its macro.
+  defp node_label(%{macro: %Macro{name: name}}), do: "Macro · #{name}"
+  defp node_label(node), do: tool_label(Tools.name(node.tool))
+
+  # Workflows / the workflows a macro was opened from / this one.
+  defp crumbs(trail, path) do
+    parents =
+      for {parent, i} <- trail |> Enum.with_index() |> Enum.reverse(),
+          do: {Path.basename(parent.path), "return_#{i}"}
+
+    [{"Workflows", "back"} | parents] ++ [Path.basename(path)]
+  end
 
   # Lucide icons for the tool commands, as ixtable's ribbon has: an input and
   # an output share their format's icon.
@@ -1104,7 +1200,9 @@ defmodule IxpipeApp.MainView do
     "find_replace" => "replace",
     "append_fields" => "between-horizontal-start",
     "join_multiple" => "combine",
-    "fuzzy_match" => "scan-search"
+    "fuzzy_match" => "scan-search",
+    "macro_input" => "log-in",
+    "macro_output" => "log-out"
   }
   defp tool_icon(tool), do: Map.get(@icons, String.replace(tool, ~r/^(in|out)put_/, ""))
 

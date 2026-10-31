@@ -15,6 +15,10 @@ defmodule IxpipeCore.Spec do
   Each node names a tool, maps the tool's input ports to upstream node ids and
   carries the tool's config and, optionally, its canvas `position`.
 
+  A workflow can be a macro, used as a tool by other workflows (see
+  `IxpipeCore.Macro`): its optional `macro:` header declares its type and
+  parameters, kept as written in `macro`.
+
   `parse/1` is `decode/1` (structure: YAML, tools, ids) then `validate/1` (a
   runnable DAG: ports, inputs, no cycles, nodes in topological order). An
   editor holds decoded drafts and validates before running.
@@ -22,39 +26,62 @@ defmodule IxpipeCore.Spec do
 
   defmodule Node do
     @moduledoc "One tool instance in a workflow."
-    defstruct [:id, :tool, inputs: %{}, config: %{}, position: nil]
+    defstruct [:id, :tool, inputs: %{}, config: %{}, position: nil, macro: nil]
 
     @type t :: %__MODULE__{
             id: String.t(),
             tool: module(),
             inputs: %{String.t() => String.t()},
             config: map(),
-            position: %{String.t() => number()} | nil
+            position: %{String.t() => number()} | nil,
+            macro: IxpipeCore.Macro.t() | {:error, term()} | nil
           }
   end
 
-  defstruct name: nil, nodes: []
+  defstruct name: nil, nodes: [], macro: nil
 
-  @type t :: %__MODULE__{name: String.t() | nil, nodes: [Node.t()]}
+  @type t :: %__MODULE__{name: String.t() | nil, nodes: [Node.t()], macro: map() | nil}
 
-  @spec parse(String.t()) :: {:ok, t()} | {:error, term()}
-  def parse(yaml) do
-    with {:ok, spec} <- decode(yaml), do: validate(spec)
+  @spec parse(String.t(), keyword()) :: {:ok, t()} | {:error, term()}
+  def parse(yaml, opts \\ []) do
+    with {:ok, spec} <- decode(yaml, opts), do: validate(spec)
   end
 
-  @doc "Parses a workflow without checking it is a runnable DAG."
-  @spec decode(String.t()) :: {:ok, t()} | {:error, term()}
-  def decode(yaml) do
+  @doc """
+  Parses a workflow without checking it is a runnable DAG.
+
+  Macro nodes load the macro they name (`IxpipeCore.Macro.attach/3`) from a
+  `path` relative to the folder of `:path`, the file `yaml` came from (the
+  current directory without one). A macro that fails to load is kept as
+  `{:error, reason}`, which `validate/1` reports.
+  """
+  @spec decode(String.t(), keyword()) :: {:ok, t()} | {:error, term()}
+  def decode(yaml, opts \\ []) do
     with {:ok, doc} <- read_yaml(yaml),
          {:ok, nodes} <- build_nodes(Map.get(doc, "nodes") || []) do
-      {:ok, %__MODULE__{name: doc["name"], nodes: nodes}}
+      spec = %__MODULE__{name: doc["name"], nodes: nodes, macro: header(doc["macro"])}
+
+      case opts[:path] do
+        nil ->
+          {:ok, IxpipeCore.Macro.attach(spec, File.cwd!(), opts[:within] || [])}
+
+        path ->
+          path = Path.expand(path)
+          {:ok, IxpipeCore.Macro.attach(spec, Path.dirname(path), [path | opts[:within] || []])}
+      end
     end
   end
+
+  # `macro:` with nothing under it still marks a macro.
+  defp header(nil), do: nil
+  defp header(header) when is_map(header), do: header
+  defp header(_), do: %{}
 
   @doc "Checks `spec` is a runnable DAG and puts its nodes in topological order."
   @spec validate(t()) :: {:ok, t()} | {:error, term()}
   def validate(%__MODULE__{nodes: nodes} = spec) do
-    with :ok <- check_inputs(nodes),
+    with :ok <- check_macros(nodes),
+         :ok <- check_inputs(nodes),
          {:ok, sorted} <- topo_sort(nodes),
          :ok <- check_config(sorted) do
       {:ok, %{spec | nodes: sorted}}
@@ -65,6 +92,7 @@ defmodule IxpipeCore.Spec do
   @spec to_yaml(t()) :: String.t()
   def to_yaml(%__MODULE__{} = spec) do
     name = if spec.name, do: ["name: ", flow(spec.name), "\n"], else: []
+    name = if spec.macro, do: [name, "macro: ", flow(spec.macro), "\n"], else: name
 
     nodes =
       for node <- spec.nodes do
@@ -129,6 +157,8 @@ defmodule IxpipeCore.Spec do
 
   def format_error({:cycle, ids}), do: "cycle: " <> Enum.join(ids, " -> ")
 
+  def format_error({:macro, id, reason}), do: "#{id}: " <> IxpipeCore.Macro.format_error(reason)
+
   def format_error({:bad_ports, id, expected: expected, got: got}),
     do: "#{id}: expects inputs [#{Enum.join(expected, ", ")}], got [#{Enum.join(got, ", ")}]"
 
@@ -178,7 +208,7 @@ defmodule IxpipeCore.Spec do
     ids = MapSet.new(nodes, & &1.id)
 
     Enum.find_value(nodes, :ok, fn node ->
-      expected = node.tool.inputs()
+      expected = IxpipeCore.Tools.inputs(node)
       required = expected -- IxpipeCore.Tools.optional_inputs(node.tool)
       got = node.inputs |> Map.keys() |> Enum.sort()
 
@@ -204,13 +234,20 @@ defmodule IxpipeCore.Spec do
         false
 
       {id, output} ->
-        output not in IxpipeCore.Tools.outputs(Enum.find(nodes, &(&1.id == id)).tool)
+        output not in IxpipeCore.Tools.outputs(Enum.find(nodes, &(&1.id == id)))
     end
+  end
+
+  defp check_macros(nodes) do
+    Enum.find_value(nodes, :ok, fn
+      %Node{id: id, macro: {:error, reason}} -> {:error, {:macro, id, reason}}
+      _ -> nil
+    end)
   end
 
   defp check_config(nodes) do
     Enum.find_value(nodes, :ok, fn node ->
-      case Enum.reject(IxpipeCore.Tools.required(node.tool), &Map.has_key?(node.config, &1)) do
+      case Enum.reject(IxpipeCore.Tools.required(node), &Map.has_key?(node.config, &1)) do
         [] -> nil
         missing -> {:error, {:missing_config, node.id, missing}}
       end
