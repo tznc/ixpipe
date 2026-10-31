@@ -13,7 +13,21 @@ defmodule IxpipeCore.Spec do
           config: {by: [amount]}
 
   Each node names a tool, maps the tool's input ports to upstream node ids and
-  carries the tool's config and, optionally, its canvas `position`.
+  carries the tool's config and, optionally, its canvas `position`, an
+  `annotation` shown under it and `disabled: true`.
+
+  A workflow can also be organised on the canvas, with optional top-level
+  keys (absent in older workflows, which load unchanged):
+
+      containers:
+        - {id: prep, title: Prepare, position: {x: 20, y: 0}, nodes: [orders, sorted],
+           collapsed: true, disabled: true}
+      comments:
+        - {id: note, text: Orders arrive daily, position: {x: 40, y: 400}}
+
+  A container holds tools (each in at most one); a disabled one disables
+  them. A disabled tool, and everything downstream of it, is skipped by a
+  run (`skipped/1`). Ids are unique across tools, containers and comments.
 
   `parse/1` is `decode/1` (structure: YAML, tools, ids) then `validate/1` (a
   runnable DAG: ports, inputs, no cycles, nodes in topological order). An
@@ -22,20 +36,63 @@ defmodule IxpipeCore.Spec do
 
   defmodule Node do
     @moduledoc "One tool instance in a workflow."
-    defstruct [:id, :tool, inputs: %{}, config: %{}, position: nil]
+    defstruct [
+      :id,
+      :tool,
+      inputs: %{},
+      config: %{},
+      position: nil,
+      annotation: nil,
+      disabled: false
+    ]
 
     @type t :: %__MODULE__{
             id: String.t(),
             tool: module(),
             inputs: %{String.t() => String.t()},
             config: map(),
-            position: %{String.t() => number()} | nil
+            position: %{String.t() => number()} | nil,
+            annotation: String.t() | nil,
+            disabled: boolean()
           }
   end
 
-  defstruct name: nil, nodes: []
+  defmodule Container do
+    @moduledoc "A titled box on the canvas holding tools (by id)."
+    defstruct [
+      :id,
+      title: "",
+      position: %{"x" => 0, "y" => 0},
+      nodes: [],
+      collapsed: false,
+      disabled: false
+    ]
 
-  @type t :: %__MODULE__{name: String.t() | nil, nodes: [Node.t()]}
+    @type t :: %__MODULE__{
+            id: String.t(),
+            title: String.t(),
+            position: %{String.t() => number()},
+            nodes: [String.t()],
+            collapsed: boolean(),
+            disabled: boolean()
+          }
+  end
+
+  defmodule Comment do
+    @moduledoc "Free text on the canvas."
+    defstruct [:id, text: "", position: %{"x" => 0, "y" => 0}]
+
+    @type t :: %__MODULE__{id: String.t(), text: String.t(), position: %{String.t() => number()}}
+  end
+
+  defstruct name: nil, nodes: [], containers: [], comments: []
+
+  @type t :: %__MODULE__{
+          name: String.t() | nil,
+          nodes: [Node.t()],
+          containers: [Container.t()],
+          comments: [Comment.t()]
+        }
 
   @spec parse(String.t()) :: {:ok, t()} | {:error, term()}
   def parse(yaml) do
@@ -46,9 +103,41 @@ defmodule IxpipeCore.Spec do
   @spec decode(String.t()) :: {:ok, t()} | {:error, term()}
   def decode(yaml) do
     with {:ok, doc} <- read_yaml(yaml),
-         {:ok, nodes} <- build_nodes(Map.get(doc, "nodes") || []) do
-      {:ok, %__MODULE__{name: doc["name"], nodes: nodes}}
+         {:ok, nodes} <- build_nodes(Map.get(doc, "nodes") || []),
+         containers = Enum.map(doc["containers"] || [], &build_container/1),
+         comments = Enum.map(doc["comments"] || [], &build_comment/1),
+         :ok <- check_ids(nodes, containers, comments),
+         :ok <- check_members(nodes, containers) do
+      {:ok,
+       %__MODULE__{name: doc["name"], nodes: nodes, containers: containers, comments: comments}}
     end
+  end
+
+  @doc """
+  The tools a run skips, in workflow order: each disabled tool, each tool in
+  a disabled container, and everything downstream of them.
+  """
+  @spec skipped(t()) :: [String.t()]
+  def skipped(%__MODULE__{} = spec) do
+    off =
+      MapSet.new(
+        for(node <- spec.nodes, node.disabled, do: node.id) ++
+          for(c <- spec.containers, c.disabled, id <- c.nodes, do: id)
+      )
+
+    set = downstream(spec.nodes, off)
+    for node <- spec.nodes, node.id in set, do: node.id
+  end
+
+  # Grows `set` with every node reading from it, until nothing changes.
+  defp downstream(nodes, set) do
+    grown =
+      for node <- nodes,
+          Enum.any?(node.inputs, fn {_port, ref} -> elem(source(ref), 0) in set end),
+          into: set,
+          do: node.id
+
+    if MapSet.size(grown) == MapSet.size(set), do: set, else: downstream(nodes, grown)
   end
 
   @doc "Checks `spec` is a runnable DAG and puts its nodes in topological order."
@@ -56,7 +145,8 @@ defmodule IxpipeCore.Spec do
   def validate(%__MODULE__{nodes: nodes} = spec) do
     with :ok <- check_inputs(nodes),
          {:ok, sorted} <- topo_sort(nodes),
-         :ok <- check_config(sorted) do
+         skipped = skipped(spec),
+         :ok <- check_config(Enum.reject(sorted, &(&1.id in skipped))) do
       {:ok, %{spec | nodes: sorted}}
     end
   end
@@ -74,15 +164,46 @@ defmodule IxpipeCore.Spec do
             {"tool", IxpipeCore.Tools.name(node.tool)},
             {"position", node.position},
             {"inputs", if(node.inputs != %{}, do: node.inputs)},
-            {"config", if(node.config != %{}, do: node.config)}
+            {"config", if(node.config != %{}, do: node.config)},
+            {"annotation", node.annotation},
+            {"disabled", if(node.disabled, do: true)}
           ]
-          |> Enum.reject(fn {_, value} -> is_nil(value) end)
-          |> Enum.map(fn {key, value} -> [key, ": ", flow(value)] end)
 
-        ["  - ", Enum.intersperse(fields, "\n    "), "\n"]
+        item(fields)
       end
 
-    IO.iodata_to_binary([name, "nodes:", if(nodes == [], do: " []\n", else: ["\n", nodes])])
+    containers =
+      for c <- spec.containers do
+        item([
+          {"id", c.id},
+          {"title", c.title},
+          {"position", c.position},
+          {"nodes", c.nodes},
+          {"collapsed", if(c.collapsed, do: true)},
+          {"disabled", if(c.disabled, do: true)}
+        ])
+      end
+
+    comments =
+      for c <- spec.comments, do: item([{"id", c.id}, {"text", c.text}, {"position", c.position}])
+
+    IO.iodata_to_binary([
+      name,
+      "nodes:",
+      if(nodes == [], do: " []\n", else: ["\n", nodes]),
+      if(containers != [], do: ["containers:\n", containers], else: []),
+      if(comments != [], do: ["comments:\n", comments], else: [])
+    ])
+  end
+
+  # One list item: its non-nil fields, flow-style.
+  defp item(fields) do
+    fields =
+      fields
+      |> Enum.reject(fn {_, value} -> is_nil(value) end)
+      |> Enum.map(fn {key, value} -> [key, ": ", flow(value)] end)
+
+    ["  - ", Enum.intersperse(fields, "\n    "), "\n"]
   end
 
   # Flow-style YAML. Strings are JSON-quoted, which YAML reads verbatim.
@@ -116,6 +237,12 @@ defmodule IxpipeCore.Spec do
   def format_error({:unknown_tool, id, tool}), do: "#{id}: unknown tool #{inspect(tool)}"
   def format_error({:duplicate_id, id}), do: "duplicate node id #{id}"
   def format_error({:bad_id, id}), do: "#{id}: an id can't contain a dot"
+
+  def format_error({:unknown_member, container, id}),
+    do: "#{container}: holds #{id}, which is not a tool"
+
+  def format_error({:duplicate_member, container, id}),
+    do: "#{container}: holds #{id}, which is already in another container"
 
   def format_error({:unknown_output, _id, ref} = error) do
     {from, output} = source(ref)
@@ -159,7 +286,9 @@ defmodule IxpipeCore.Spec do
             tool: tool,
             inputs: inputs,
             config: node["config"] || %{},
-            position: node["position"]
+            position: node["position"],
+            annotation: text(node["annotation"]),
+            disabled: node["disabled"] == true
           }
 
           {:cont, {:ok, [node | acc]}}
@@ -170,6 +299,59 @@ defmodule IxpipeCore.Spec do
     end)
     |> case do
       {:ok, nodes} -> {:ok, Enum.reverse(nodes)}
+      error -> error
+    end
+  end
+
+  @origin %{"x" => 0, "y" => 0}
+
+  defp build_container(raw) do
+    %Container{
+      id: to_string(raw["id"]),
+      title: text(raw["title"]) || "",
+      position: raw["position"] || @origin,
+      nodes: Enum.map(raw["nodes"] || [], &to_string/1),
+      collapsed: raw["collapsed"] == true,
+      disabled: raw["disabled"] == true
+    }
+  end
+
+  defp build_comment(raw),
+    do: %Comment{
+      id: to_string(raw["id"]),
+      text: text(raw["text"]) || "",
+      position: raw["position"] || @origin
+    }
+
+  defp text(nil), do: nil
+  defp text(value), do: to_string(value)
+
+  defp check_ids(nodes, containers, comments) do
+    ids = Enum.map(nodes ++ containers ++ comments, & &1.id)
+
+    case ids -- Enum.uniq(ids) do
+      [] -> :ok
+      [id | _] -> {:error, {:duplicate_id, id}}
+    end
+  end
+
+  defp check_members(nodes, containers) do
+    ids = MapSet.new(nodes, & &1.id)
+
+    Enum.reduce_while(containers, {:ok, MapSet.new()}, fn c, {:ok, seen} ->
+      cond do
+        missing = Enum.find(c.nodes, &(&1 not in ids)) ->
+          {:halt, {:error, {:unknown_member, c.id, missing}}}
+
+        twice = Enum.find(c.nodes, &(&1 in seen)) ->
+          {:halt, {:error, {:duplicate_member, c.id, twice}}}
+
+        true ->
+          {:cont, {:ok, MapSet.union(seen, MapSet.new(c.nodes))}}
+      end
+    end)
+    |> case do
+      {:ok, _} -> :ok
       error -> error
     end
   end

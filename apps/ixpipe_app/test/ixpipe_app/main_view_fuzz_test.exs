@@ -79,7 +79,13 @@ defmodule IxpipeApp.MainViewFuzzTest do
 
     if spec = assigns.spec do
       ids = Enum.map(spec.nodes, & &1.id)
-      assert ids == Enum.uniq(ids), "duplicate ids after #{inspect(trail)}"
+      all = ids ++ Enum.map(spec.containers ++ spec.comments, & &1.id)
+      assert all == Enum.uniq(all), "duplicate ids after #{inspect(trail)}"
+
+      # Each tool is in at most one container, and every member exists.
+      members = Enum.flat_map(spec.containers, & &1.nodes)
+      assert members == Enum.uniq(members), "a tool in two containers after #{inspect(trail)}"
+      assert members -- ids == [], "a container holds a missing tool after #{inspect(trail)}"
 
       # A wire reads `node` or `node.output`; the node must exist and, when
       # named, so must the output.

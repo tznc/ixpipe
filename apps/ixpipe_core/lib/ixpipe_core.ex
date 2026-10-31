@@ -15,7 +15,9 @@ defmodule IxpipeCore do
   `node.output` for each output of a tool with several. The tables live as
   long as a result references the database. When a node fails, the run
   fails with the first (in workflow order) and its raw error; `execute/2`
-  keeps what did run, and every node's messages.
+  keeps what did run, and every node's messages. Disabled tools and
+  everything downstream of them (`Spec.skipped/1`) are skipped: they have
+  no results.
 
   Options: `:settings`, DuckDB `SET` options such as `memory_limit`.
   """
@@ -48,10 +50,13 @@ defmodule IxpipeCore do
     started = System.monotonic_time(:millisecond)
     {:ok, db} = Duck.open(Keyword.get(opts, :settings, []))
     log = Context.new_log()
+    disabled = Spec.skipped(spec)
 
     try do
+      skip_disabled(spec, disabled, %Context{db: db, id: nil, log: log})
+
       produced =
-        spec
+        %{spec | nodes: Enum.reject(spec.nodes, &(&1.id in disabled))}
         |> to_runic(db, log)
         |> Workflow.react_until_satisfied(:run)
         |> Workflow.raw_productions_by_component()
@@ -90,6 +95,7 @@ defmodule IxpipeCore do
         status: if(Enum.any?(Map.values(nodes), &(&1 == :failed)), do: :failed, else: :ok),
         nodes: nodes,
         tables: tables,
+        disabled: disabled,
         messages: messages,
         ms: System.monotonic_time(:millisecond) - started
       }
@@ -97,6 +103,51 @@ defmodule IxpipeCore do
       :ets.delete(log)
     end
   end
+
+  # A disabled tool, a tool in a disabled container, and everything after
+  # one: each says why it was skipped, naming the disabled tool it follows.
+  defp skip_disabled(spec, disabled, ctx) do
+    nodes = Map.new(spec.nodes, &{&1.id, &1})
+    containers = for c <- spec.containers, c.disabled, id <- c.nodes, into: %{}, do: {id, c}
+
+    for id <- disabled do
+      cause = off_cause(nodes, containers, disabled, id)
+      {reason, fix} = off_reason(nodes, containers, cause)
+
+      text =
+        if cause == id,
+          do: "Skipped: #{reason}. Enable #{if fix == id, do: "it", else: fix} and run again.",
+          else: "Skipped: after #{cause}, which is #{reason}. Enable #{fix} and run again."
+
+      Context.info(%{ctx | id: id}, text)
+    end
+  end
+
+  # The disabled tool (or tool in a disabled container) `id` follows.
+  defp off_cause(nodes, containers, disabled, id) do
+    node = nodes[id]
+
+    if node.disabled or Map.has_key?(containers, id) do
+      id
+    else
+      node.inputs
+      |> Map.values()
+      |> Enum.map(&elem(Spec.source(&1), 0))
+      |> Enum.find(&(&1 in disabled))
+      |> then(&off_cause(nodes, containers, disabled, &1))
+    end
+  end
+
+  # Why `id` is off, and what to enable.
+  defp off_reason(nodes, containers, id) do
+    if nodes[id].disabled,
+      do: {"disabled", id},
+      else:
+        {"in disabled container #{container_name(containers[id])}",
+         container_name(containers[id])}
+  end
+
+  defp container_name(%{title: title, id: id}), do: if(title in [nil, ""], do: id, else: title)
 
   @doc "Compiles `spec` into a Runic workflow with one step per node, working in `db`."
   @spec to_runic(Spec.t(), Duck.db(), Context.log()) :: Workflow.t()

@@ -9,6 +9,7 @@ desktop and mobile app in Elixir, rendered by GPUI through
 - `apps/ixpipe_core`: the engine, pure Elixir with no UI dependency.
   - `IxpipeCore.Spec` parses YAML workflows: `decode/1` (drafts), `validate/1` (runnable DAG), `to_yaml/1`.
   - `IxpipeCore.Edit` applies canvas edits (add, move, connect, remove) to drafts.
+  - Organisation (optional YAML keys, so older workflows load unchanged): `containers` (titled boxes holding tools; collapse, disable), `comments`, and per-tool `annotation` and `disabled`. A run skips disabled tools and everything downstream (`Spec.skipped/1`): they are `:skipped` in the `Run`, listed in `Run.disabled` (apart from tools skipped below a failure), with no results and an info message saying why ("Skipped: disabled.", "Skipped: in disabled container X.", "Skipped: after X, which is disabled.").
   - `IxpipeCore.run/2` compiles a spec to a [Runic](https://hex.pm/packages/runic) workflow and runs it in a fresh in-memory DuckDB v2 database (`IxpipeCore.Duck`): Runic orchestrates the DAG, and each node's output is a table there (`IxpipeCore.Table`, named for the node: `id`, or `id.output`). Runic steps run concurrently, each on its own connection; past `memory_limit` DuckDB spills to disk.
   - `IxpipeCore.execute/2` runs as Alteryx does and returns an `IxpipeCore.Run`: each node's status (ok, failed, skipped below a failure), the tables of every node that ran, and per-node `IxpipeCore.Message`s (info: rows and time; warnings; errors in "what happened. what to do." form via `IxpipeCore.Errors.humanize/1`, the raw DuckDB text as `detail`). `run/2` wraps it as `{:ok, tables}` or the first `{:node_failed, …}`. Tools record warnings with `Context.warn/2` and info with `Context.info/2` (safe across Runic's concurrent steps).
   - Tools (`IxpipeCore.Tools.*`) implement `IxpipeCore.Tool` over tables: `inputs/0`, `fields/0` (the settings schema the properties panel renders; `IxpipeCore.Config` parses and formats each type) and `run/3` (`inputs, config, %IxpipeCore.Context{}`), mostly SQL through `Context.sql/3`. Expressions in Filter and Formula are DuckDB SQL. Register new ones in `IxpipeCore.Tools` and in a ribbon group (`@ribbon`) in `MainView`; a test checks every tool is on exactly one tab.
@@ -58,7 +59,8 @@ one-off style is a bug. `design_rules_test.exs` enforces what can be checked.
   title, one sentence, at most one action (tested on home and canvas).
 - **Ribbon** (`<.ribbon>`, `<.ribbon_group>`), as in ixtable after Access:
   a row of tabs over labelled command groups, under the canvas header.
-  Home holds Edit (Undo, Redo) and View (zoom); In/Out, Preparation, Join,
+  Home holds Edit (Undo, Redo), Organise (Container, Comment) and View
+  (zoom); In/Out, Preparation, Join,
   Parse and Transform hold the tools. Commands are `:quiet` small buttons with
   a lucide icon (`<.button icon="undo-2">`, ixtable's: Undo2, Redo2, ZoomIn,
   ZoomOut; each tool its own, an input and output sharing their format's)
