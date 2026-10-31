@@ -20,9 +20,24 @@ defmodule IxpipeApp.MainView do
   @page_rows 50
   @browse %{page: 0, sort: nil, view: "data"}
   # Narrower than this (a phone in portrait), the window shows one pane at
-  # a time: Canvas, Properties or Results.
+  # a time: Canvas, Properties, Results or Messages.
   @phone_width 640
-  @panes [{"canvas", "Canvas"}, {"properties", "Properties"}, {"results", "Results"}]
+  @panes [
+    {"canvas", "Canvas"},
+    {"properties", "Properties"},
+    {"results", "Results"},
+    {"messages", "Messages"}
+  ]
+  # Under the canvas on a wider window: the selected tool's rows, or the
+  # last run's messages.
+  @panels [{"results", "Results"}, {"messages", "Messages"}]
+  # Messages' filters: `{key, label, accessible name}`.
+  @levels [
+    {"all", "All", "Show all messages"},
+    {"error", "Errors", "Show errors"},
+    {"warning", "Warnings", "Show warnings"},
+    {"info", "Info", "Show info"}
+  ]
   # The ribbon's tabs: Home edits and views the workflow; the rest hold the
   # tools, by category, in labelled groups.
   @ribbon [
@@ -34,13 +49,18 @@ defmodule IxpipeApp.MainView do
      ]},
     {"prepare", "Preparation",
      [
-       {"Columns", ~w(select formula data_cleansing)},
-       {"Rows", ~w(filter sort sample unique)}
+       {"Columns", ~w(select formula data_cleansing auto_field imputation)},
+       {"Rows", ~w(filter sort sample unique)},
+       {"Sequence", ~w(record_id tile generate_rows)}
      ]},
-    {"join", "Join", [{"Combine", ~w(join union)}]},
+    {"join", "Join",
+     [
+       {"Combine", ~w(join union join_multiple append_fields)},
+       {"Match", ~w(find_replace fuzzy_match)}
+     ]},
     {"parse", "Parse", [{"Split", ~w(text_to_columns regex)}]},
     {"transform", "Transform",
-     [{"Aggregate", ~w(summarize)}, {"Reshape", ~w(cross_tab transpose)}]}
+     [{"Aggregate", ~w(summarize running_total)}, {"Reshape", ~w(cross_tab transpose)}]}
   ]
 
   def mount(args) do
@@ -58,9 +78,8 @@ defmodule IxpipeApp.MainView do
       toast: nil,
       rows: %{},
       # The last run's tables, alive in its DuckDB database while Results
-      # browses them, and their warnings; an edit drops them.
+      # browses them; an edit drops them.
       results: %{},
-      warnings: %{},
       # The last run's columns of every output, kept across edits so
       # Select's editor can list its input's columns.
       schemas: %{},
@@ -83,7 +102,10 @@ defmodule IxpipeApp.MainView do
       tab: "home",
       width: nil,
       height: nil,
-      pane: "canvas"
+      pane: "canvas",
+      panel: "results",
+      level: "all",
+      run: nil
     }
 
     case args[:path] do
@@ -167,7 +189,7 @@ defmodule IxpipeApp.MainView do
         <% end %>
       </.ribbon>
       <div class={"relative flex-1 " <> if(@phone, do: "flex-col", else: "flex-row")}>
-        <div :if={!@phone || @pane == "canvas"} class="flex-col flex-1">
+        <div :if={!@phone || @pane == "canvas"} class="flex-col flex-1 min-w-0">
         <div class="relative flex-1 overflow-hidden bg-canvas">
           <.empty_state :if={@spec.nodes == []} title="This workflow is empty">
             Add a tool from a ribbon tab above.
@@ -194,7 +216,7 @@ defmodule IxpipeApp.MainView do
             <div class="flex-row flex-wrap items-center gap-2">
               <.caption>{tool_label(Tools.name(node.tool))}</.caption>
               <.status_badge :if={@rows[node.id]} tone={:success}>{plural(@rows[node.id], "row")}</.status_badge>
-              <.status_badge :if={@warnings[node.id]} tone={:warning}>{plural(length(@warnings[node.id]), "warning")}</.status_badge>
+              <.run_badge run={@run} id={node.id} />
             </div>
             <div :if={multi?(node)} class="flex-row flex-wrap gap-1">
               <.status_badge :for={out <- Tools.outputs(node.tool)} :if={@rows["#{node.id}.#{out}"]}
@@ -221,13 +243,13 @@ defmodule IxpipeApp.MainView do
           <.feedback :if={!@phone} toast={@toast} status={@status} phone={false} />
         </div>
         <div :if={!@phone} class="h-px w-full bg-border" />
-        <.results :if={!@phone} node={@node} output={@node && output_key(@node, @output)}
-          total={@node && @rows[output_key(@node, @output)]} grid={@grid} profile={@profile} browse={@browse}
-          warnings={(@node && @warnings[output_key(@node, @output)]) || []} />
+        <.results :if={!@phone && @panel == "results"} node={@node} output={@node && output_key(@node, @output)}
+          total={@node && @rows[output_key(@node, @output)]} grid={@grid} profile={@profile} browse={@browse} />
+        <.messages :if={!@phone && @panel == "messages"} run={@run} level={@level} spec={@spec} />
         </div>
         <.results :if={@phone && @pane == "results"} node={@node} output={@node && output_key(@node, @output)}
-          total={@node && @rows[output_key(@node, @output)]} grid={@grid} profile={@profile} browse={@browse}
-          warnings={(@node && @warnings[output_key(@node, @output)]) || []} phone />
+          total={@node && @rows[output_key(@node, @output)]} grid={@grid} profile={@profile} browse={@browse} phone />
+        <.messages :if={@phone && @pane == "messages"} run={@run} level={@level} spec={@spec} phone />
         <div :if={!@phone} class="w-px h-full bg-border" />
         <.properties :if={!@phone || @pane == "properties"} node={@node} drafts={@drafts} errors={@errors}
           formula_rows={@formula_rows} dir={@dir} phone={@phone}
@@ -281,8 +303,15 @@ defmodule IxpipeApp.MainView do
     do: {:noreply, %{assigns | width: width, height: height}}
 
   def handle_event("pane", %{"pane" => pane}, assigns)
-      when pane in ["canvas", "properties", "results"],
+      when pane in ["canvas", "properties", "results", "messages"],
       do: {:noreply, %{assigns | pane: pane}}
+
+  def handle_event("panel", %{"tab" => panel}, assigns) when panel in ["results", "messages"],
+    do: {:noreply, %{assigns | panel: panel}}
+
+  def handle_event("level", %{"level" => level}, assigns)
+      when level in ["all", "error", "warning", "info"],
+      do: {:noreply, %{assigns | level: level}}
 
   # Text settings: the form sends every value with the one that changed as
   # _target. Formula rows are one setting, a line each.
@@ -483,50 +512,32 @@ defmodule IxpipeApp.MainView do
     {:noreply, %{assigns | status: status}}
   end
 
+  # Every tool that can run does: a failure skips only what is downstream
+  # of it, and the tools that ran keep their results.
   def handle_event("run", _values, assigns) do
-    result =
-      with {:ok, spec} <- Spec.validate(assigns.spec),
-           do: IxpipeCore.run(with_home(spec, assigns.dir))
-
-    case result do
-      {:ok, results} ->
-        rows = Map.new(results, fn {id, table} -> {id, Table.count(table)} end)
-        schemas = Map.new(results, fn {id, table} -> {id, Table.schema(table)} end)
-        warnings = for {id, %Table{warnings: [_ | _] = w}} <- results, into: %{}, do: {id, w}
-
-        hint =
-          if assigns.selected,
-            do: "Results shows #{assigns.selected}.",
-            else: "Select a tool to see its rows in Results."
-
-        status =
-          case Enum.sort(warnings) do
-            [] ->
-              {:success, "Run succeeded", hint}
-
-            [{id, [first | _]} | _] ->
-              n = warnings |> Map.values() |> Enum.map(&length/1) |> Enum.sum()
-              {:warning, "Run succeeded with #{plural(n, "warning")}", "#{id}: #{first}"}
-          end
+    case Spec.validate(assigns.spec) do
+      {:ok, spec} ->
+        # The run's tables stay alive in its database while Results browses
+        # them, a partial run's too: only the tools that ran have tables.
+        run = IxpipeCore.execute(with_home(spec, assigns.dir))
+        rows = Map.new(run.tables, fn {id, table} -> {id, Table.count(table)} end)
+        schemas = Map.new(run.tables, fn {id, table} -> {id, Table.schema(table)} end)
 
         # On a phone, a selected tool's rows show at once.
         pane = if phone?(assigns) && assigns.selected, do: "results", else: assigns.pane
 
         assigns = %{
           assigns
-          | status: status,
+          | status: run_status(run, assigns.selected),
             rows: rows,
-            results: results,
-            warnings: warnings,
-            schemas: schemas,
-            pane: pane
+            results: run.tables,
+            # Columns of the tools that ran; the others keep their last.
+            schemas: Map.merge(assigns.schemas, schemas),
+            pane: pane,
+            run: %{nodes: run.nodes, messages: canvas_order(run.messages, assigns.spec)}
         }
 
         {:noreply, refresh(assigns)}
-
-      {:error, {:node_failed, id, message}} ->
-        status = {:danger, "#{id} failed.", "#{message} Fix its config and run again."}
-        {:noreply, clear_run(%{assigns | status: status})}
 
       {:error, reason} ->
         status = {:danger, "The workflow can't run yet.", Spec.format_error(reason)}
@@ -535,6 +546,34 @@ defmodule IxpipeApp.MainView do
   end
 
   def handle_info(:dismiss_toast, assigns), do: {:noreply, %{assigns | toast: nil}}
+
+  # A run reports in the order it ran; Messages lists tools as the workflow
+  # does (sorting is stable, so each tool's messages keep their order).
+  defp canvas_order(messages, spec) do
+    index = spec.nodes |> Enum.with_index() |> Map.new(fn {node, i} -> {node.id, i} end)
+    Enum.sort_by(messages, &index[&1.node])
+  end
+
+  # The run callout: where it failed and why, how many warnings, or success.
+  defp run_status(%IxpipeCore.Run{status: :failed} = run, _selected) do
+    [error | _] = IxpipeCore.Run.messages(run, :error)
+    {:danger, "Failed at #{Enum.join(IxpipeCore.Run.failed(run), ", ")}.", error.text}
+  end
+
+  defp run_status(run, selected) do
+    case length(IxpipeCore.Run.messages(run, :warning)) do
+      0 ->
+        hint =
+          if selected,
+            do: "Results shows #{selected}.",
+            else: "Select a tool to see its rows in Results."
+
+        {:success, "Run succeeded", hint}
+
+      n ->
+        {:warning, "Ran with #{plural(n, "warning")}", "Messages lists what to check."}
+    end
+  end
 
   defp home(assigns) do
     files =
@@ -616,7 +655,7 @@ defmodule IxpipeApp.MainView do
   # Forgets the last run's results (its database goes with them), keeping
   # its columns for Select's editor.
   defp clear_run(assigns),
-    do: %{assigns | rows: %{}, results: %{}, warnings: %{}, grid: nil, profile: nil}
+    do: %{assigns | rows: %{}, results: %{}, run: nil, grid: nil, profile: nil}
 
   # Database tools find saved connections in the workflows folder; it is
   # given for the run only, never saved into the workflow.
@@ -830,7 +869,6 @@ defmodule IxpipeApp.MainView do
   attr(:grid, :map, default: nil)
   attr(:profile, :list, default: nil)
   attr(:browse, :map, required: true)
-  attr(:warnings, :list, default: [])
   attr(:phone, :boolean, default: false)
 
   # Browse, as in Alteryx: every row a page at a time, sorted by a column
@@ -840,7 +878,7 @@ defmodule IxpipeApp.MainView do
     <section class={"flex-col gap-2 p-4 " <> if(@phone, do: "flex-1", else: "h-[280px]")} aria-label="Results">
       <div class="flex-row flex-wrap items-center justify-between gap-2">
         <div class="flex-row items-center gap-2">
-          <.section>Results</.section>
+          <.panel_header phone={@phone} panel="results" title="Results" />
           <.caption :if={@total}>{@output} · {plural(@total, "row")}</.caption>
         </div>
         <div :if={@total} class="flex-row flex-wrap items-center gap-1">
@@ -863,9 +901,6 @@ defmodule IxpipeApp.MainView do
           class={if @output == "#{@node.id}.#{out}", do: "border-primary bg-primary/12", else: ""}>
           {out}
         </.button>
-      </div>
-      <div :if={@warnings != []} class="flex-row flex-wrap gap-1" aria-label="Warnings">
-        <.status_badge :for={warning <- @warnings} tone={:warning}>{warning}</.status_badge>
       </div>
       <.caption :if={!@node}>Select a tool to see its results.</.caption>
       <.caption :if={@node && !@total}>Run the workflow to see this tool's results.</.caption>
@@ -953,6 +988,116 @@ defmodule IxpipeApp.MainView do
     for n <- bins, do: if(n == 0, do: 1, else: max(2, round(n * 24 / top)))
   end
 
+  attr(:phone, :boolean, required: true)
+  attr(:panel, :string, required: true)
+  attr(:title, :string, required: true)
+
+  # On a wider window, the Results and Messages tabs; on a phone, the tab
+  # bar names the pane, so a title.
+  defp panel_header(assigns) do
+    ~H"""
+    <.section :if={@phone}>{@title}</.section>
+    <.tabs :if={!@phone} tabs={panels()} selected={@panel} event="panel" />
+    """
+  end
+
+  attr(:run, :map, default: nil)
+  attr(:id, :string, required: true)
+
+  # A card's run outcome beyond its rows: failed, skipped, or warned.
+  defp run_badge(assigns) do
+    assigns =
+      Map.merge(assigns, %{
+        state: assigns.run && assigns.run.nodes[assigns.id],
+        warnings:
+          if(assigns.run,
+            do:
+              Enum.count(assigns.run.messages, &(&1.node == assigns.id and &1.level == :warning)),
+            else: 0
+          )
+      })
+
+    ~H"""
+    <.status_badge :if={@state == :failed} tone={:danger}>Error</.status_badge>
+    <.status_badge :if={@state == :skipped} tone={:neutral}>Skipped</.status_badge>
+    <.status_badge :if={@state == :ok && @warnings > 0} tone={:warning}>{plural(@warnings, "warning")}</.status_badge>
+    """
+  end
+
+  attr(:run, :map, default: nil)
+  attr(:level, :string, required: true)
+  attr(:spec, :map, required: true)
+  attr(:phone, :boolean, default: false)
+
+  # The last run's messages, by tool in workflow order, filtered by level.
+  # Choosing one selects its tool; a raw error is its tooltip.
+  defp messages(assigns) do
+    messages = if assigns.run, do: assigns.run.messages, else: []
+
+    shown =
+      Enum.filter(
+        messages,
+        &(assigns.level == "all" or Atom.to_string(&1.level) == assigns.level)
+      )
+
+    tools = Map.new(assigns.spec.nodes, &{&1.id, tool_label(Tools.name(&1.tool))})
+
+    assigns =
+      Map.merge(assigns, %{
+        groups: Enum.chunk_by(shown, & &1.node),
+        tools: tools,
+        counts:
+          Map.put(
+            Enum.frequencies_by(messages, &Atom.to_string(&1.level)),
+            "all",
+            length(messages)
+          )
+      })
+
+    ~H"""
+    <section class={"flex-col gap-2 p-4 " <> if(@phone, do: "flex-1", else: "h-[280px]")} aria-label="Messages">
+      <div class="flex-row items-center gap-2">
+        <.panel_header phone={@phone} panel="messages" title="Messages" />
+      </div>
+      <.empty_state :if={!@run} title="No messages yet">Run the workflow to see each tool's messages.</.empty_state>
+      <div :if={@run} class="flex-row flex-wrap gap-1" role="group" aria-label="Message levels">
+        <.button :for={{key, label, name} <- levels()} size={touch(@phone, :sm)} phx-click="level"
+          phx-value-level={key} aria-label={name}
+          class={if @level == key, do: "border-primary bg-primary/12", else: ""}>
+          {label} {@counts[key] || 0}
+        </.button>
+      </div>
+      <.caption :if={@run && @groups == []}>No {level_noun(@level)} in the last run.</.caption>
+      <div :if={@groups != []} class="flex-col gap-3 flex-1 overflow-y-scroll">
+        <div :for={[%{node: node} | _] = group <- @groups} class="flex-col gap-1">
+          <div class="flex-row items-center gap-2">
+            <.label>{node}</.label>
+            <.caption>{@tools[node]}</.caption>
+          </div>
+          <.list_item :for={m <- group} phx-click="select" phx-value-id={m.node}
+            aria-label={"#{m.node}: #{m.text}"} title={m.detail}>
+            <.status_badge tone={level_tone(m.level)}>{level_word(m.level)}</.status_badge>
+            <.body class="flex-1 min-w-0">{m.text}</.body>
+          </.list_item>
+        </div>
+      </div>
+    </section>
+    """
+  end
+
+  defp level_tone(:error), do: :danger
+  defp level_tone(:warning), do: :warning
+  defp level_tone(:info), do: :neutral
+  defp level_word(:error), do: "Error"
+  defp level_word(:warning), do: "Warning"
+  defp level_word(:info), do: "Info"
+  defp level_noun("error"), do: "errors"
+  defp level_noun("warning"), do: "warnings"
+  defp level_noun("info"), do: "info messages"
+  defp level_noun(_), do: "messages"
+  defp levels, do: @levels
+  defp panels, do: @panels
+
   defp cell_class(value, numeric) do
     muted = if value in ["—", "0"], do: "text-muted-foreground ", else: ""
     muted <> if(numeric, do: "text-right", else: "")
@@ -969,7 +1114,7 @@ defmodule IxpipeApp.MainView do
 
   defp properties(assigns) do
     ~H"""
-    <aside class={"flex-col gap-6 p-4 overflow-y-scroll " <> if(@phone, do: "flex-1 w-full", else: "w-[320px]")}
+    <aside class={"flex-col gap-6 p-4 overflow-y-scroll " <> if(@phone, do: "flex-1 w-full", else: "w-[320px] shrink-0")}
       aria-label="Configuration">
       <.empty_state :if={!@node} title="Nothing selected">Select a tool to configure it.</.empty_state>
       <div :if={@node} class="flex-col gap-1">
@@ -1243,7 +1388,15 @@ defmodule IxpipeApp.MainView do
     "text_to_columns" => "Text to columns",
     "regex" => "RegEx",
     "data_cleansing" => "Data cleansing",
-    "input_postgres" => "Input Postgres"
+    "input_postgres" => "Input Postgres",
+    "record_id" => "Record ID",
+    "running_total" => "Running total",
+    "generate_rows" => "Generate rows",
+    "auto_field" => "Auto field",
+    "find_replace" => "Find replace",
+    "append_fields" => "Append fields",
+    "join_multiple" => "Join multiple",
+    "fuzzy_match" => "Fuzzy match"
   }
   defp tool_label(tool), do: Map.get_lazy(@labels, tool, fn -> String.capitalize(tool) end)
 
@@ -1268,7 +1421,17 @@ defmodule IxpipeApp.MainView do
     "regex" => "regex",
     "summarize" => "sigma",
     "cross_tab" => "table-2",
-    "transpose" => "arrow-left-right"
+    "transpose" => "arrow-left-right",
+    "record_id" => "hash",
+    "running_total" => "trending-up",
+    "tile" => "chart-column-stacked",
+    "generate_rows" => "list-plus",
+    "imputation" => "paint-bucket",
+    "auto_field" => "wand-sparkles",
+    "find_replace" => "replace",
+    "append_fields" => "between-horizontal-start",
+    "join_multiple" => "combine",
+    "fuzzy_match" => "scan-search"
   }
   defp tool_icon(tool), do: Map.get(@icons, String.replace(tool, ~r/^(in|out)put_/, ""))
 

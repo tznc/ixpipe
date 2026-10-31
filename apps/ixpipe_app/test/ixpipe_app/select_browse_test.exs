@@ -47,9 +47,10 @@ defmodule IxpipeApp.SelectBrowseTest do
     Map.new(spec.nodes, &{&1.id, &1.config})
   end
 
+  # orders' amount has an "n/a", so Input CSV warns that it reads it as text.
   defp run(w) do
     Test.click(w, "Run workflow")
-    assert Test.text(w) =~ "Run succeeded"
+    assert Test.text(w) =~ "Ran with 1 warning"
   end
 
   describe "the Select editor" do
@@ -105,9 +106,15 @@ defmodule IxpipeApp.SelectBrowseTest do
              }
 
       Test.click(w, "Run workflow")
-      text = Test.text(w)
-      assert text =~ "Run succeeded with 1 warning"
-      assert text =~ "amount: 3 values couldn't become DOUBLE and are now NULL."
+      assert Test.text(w) =~ "Ran with 2 warnings"
+      # The cast's count is the run's warning for pick: a card badge and a
+      # message, as any tool's warning is.
+      [card] = UI.find(w, "pick")
+      assert "1 warning" in badges(card, "warning")
+      Test.click(w, "Messages tab")
+      Test.click(w, "Show warnings")
+      assert Test.text(w) =~ "amount: 3 values couldn't become DOUBLE and are now NULL."
+      assert UI.find(w, "pick: amount: 3 values couldn't become DOUBLE and are now NULL.") != []
     end
 
     test "any DuckDB type can be typed; a wrong one says what to do", %{w: w, dir: dir} do
@@ -174,6 +181,35 @@ defmodule IxpipeApp.SelectBrowseTest do
       assert Test.text(w) =~ "Rows 1–50"
     end
 
+    test "after a partial failure, the tools that ran still browse", %{w: w, dir: dir} do
+      csv = Path.join(dir, "orders.csv")
+
+      File.write!(Path.join(dir, "partial.yaml"), """
+      nodes:
+        - {id: orders, tool: input_csv, position: {x: 40, y: 40}, config: {path: #{csv}}}
+        - {id: bad, tool: filter, position: {x: 280, y: 40}, inputs: {in: orders}, config: {expr: "nope > 1"}}
+        - {id: sorted, tool: sort, position: {x: 280, y: 220}, inputs: {in: orders}, config: {by: [id]}}
+      """)
+
+      Test.click(w, "Workflows")
+      Test.click(w, "Open partial.yaml")
+      Test.click(w, "Run workflow")
+      assert Test.text(w) =~ "Failed at bad."
+
+      Test.click(w, "Select sorted")
+      assert Test.text(w) =~ "sorted · 120 rows"
+      Test.click(w, "Next page")
+      assert Test.text(w) =~ "Rows 51–100"
+      Test.click(w, "Sort by id")
+      Test.click(w, "Sort by id")
+      assert first_id(w) == "120"
+      Test.click(w, "Show profile")
+      assert Test.text(w) =~ "Rome (80), Oslo (40)"
+
+      Test.click(w, "Select bad")
+      assert Test.text(w) =~ "Run the workflow to see this tool's results."
+    end
+
     test "on a phone, Results browses too, with touch-size controls", %{w: w} do
       Test.resize(w, 390, 844)
       Test.click(w, "Select orders")
@@ -197,4 +233,12 @@ defmodule IxpipeApp.SelectBrowseTest do
 
   defp texts(text) when is_binary(text), do: [text]
   defp texts(%{"c" => children}), do: Enum.flat_map(children, &texts/1)
+
+  defp badges(%{} = el, tone),
+    do: for(%{"a" => %{"data-badge" => ^tone}} = el <- elements(el), do: text(el))
+
+  defp elements(%{"c" => children} = el), do: [el | Enum.flat_map(children, &elements/1)]
+  defp elements(_), do: []
+  defp text(text) when is_binary(text), do: text
+  defp text(%{"c" => children}), do: Enum.map_join(children, "", &text/1)
 end

@@ -88,12 +88,14 @@ defmodule IxpipeApp.QA.SelectBrowseTest do
     Playwright.click(page, "Type of name")
     Playwright.click(page, "Cast name to BIGINT")
     Playwright.click(page, "Run workflow")
-    assert :ok = Playwright.await_text(page, "Run succeeded with 1 warning")
+    assert :ok = Playwright.await_text(page, "Ran with 1 warning")
+    Playwright.click(page, "Messages tab")
+    Playwright.click(page, "Show warnings")
 
     QA.capture(page, "select-03-warning", [
-      "An amber-tinted callout bottom-left: 'Run succeeded with 1 warning', naming select_1 and name's 3 NULLs",
+      "An amber-tinted callout bottom-left: 'Ran with 1 warning', 'Messages lists what to check.'",
       "The select_1 card has a green '3 rows' pill and an amber '1 warning' pill",
-      "Results shows an amber pill 'name: 3 values couldn't become BIGINT and are now NULL.'"
+      "Messages (filtered to Warnings) lists select_1 with an amber Warning badge: 'name: 3 values couldn't become BIGINT and are now NULL.'"
     ])
   end
 

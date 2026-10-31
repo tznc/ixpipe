@@ -109,6 +109,16 @@ defmodule IxpipeApp.MainViewFuzzTest do
 
       assert assigns.results == %{} or assigns.rows != %{},
              "results without a run after #{inspect(trail)}"
+
+      # A run's messages and statuses are for the workflow as it is: any
+      # edit clears them.
+      if run = assigns.run do
+        assert Enum.sort(Map.keys(run.nodes)) == Enum.sort(ids),
+               "run statuses out of step with the workflow after #{inspect(trail)}"
+
+        assert Enum.all?(run.messages, &(&1.node in ids)),
+               "a message for a missing tool after #{inspect(trail)}"
+      end
     end
   end
 end
