@@ -109,4 +109,100 @@ defmodule IxpipeCore.ToolMessagesTest do
       assert "Wrote 3 rows to #{path}." in infos(ctx)
     end
   end
+
+  describe "DateTime" do
+    test "warns how many values couldn't be parsed, as well as sending them to failed",
+         %{ctx: ctx} do
+      src = Table.new(ctx.db, "src", id: [1, 2, 3, 4], d: ["01/02/2024", "31/02/2024", nil, "x"])
+
+      %{"failed" => failed} =
+        Tools.DateTime.run(%{"in" => src}, %{"column" => "d", "format" => "dd/MM/yyyy"}, ctx)
+
+      assert Table.count(failed) == 2
+      assert [warning] = warnings(ctx)
+
+      assert warning =~
+               ~s|2 values of "d" couldn't be parsed as dd/MM/yyyy and are empty ("31/02/2024").|
+
+      assert warning =~ "failed output"
+    end
+
+    test "warns about values that aren't dates to format", %{ctx: ctx} do
+      src = Table.new(ctx.db, "src", d: ["2024-01-02", "soon"])
+
+      Tools.DateTime.run(
+        %{"in" => src},
+        %{"column" => "d", "convert" => "format", "format" => "dd/MM/yyyy"},
+        ctx
+      )
+
+      assert [warning] = warnings(ctx)
+      assert warning =~ ~s|1 value of "d" couldn't be read as a date and is empty ("soon").|
+    end
+
+    test "every value parsed: no warning", %{ctx: ctx} do
+      src = Table.new(ctx.db, "src", d: ["2024-01-02", nil])
+      Tools.DateTime.run(%{"in" => src}, %{"column" => "d", "format" => "yyyy-MM-dd"}, ctx)
+      assert warnings(ctx) == []
+    end
+  end
+
+  describe "Multi-row and Multi-field errors read well" do
+    defp error(fun) do
+      fun.()
+      flunk("expected an error")
+    rescue
+      e in RuntimeError -> IxpipeCore.Errors.humanize(Exception.message(e))
+    end
+
+    setup %{ctx: ctx} do
+      %{t: Table.new(ctx.db, "src", a: [1, 2], name: ["x", "y"])}
+    end
+
+    test "a row reference to a missing column", %{t: t, ctx: ctx} do
+      text =
+        error(fn ->
+          Tools.MultiRowFormula.run(%{"in" => t}, %{"as" => "x", "expr" => "[Row-1:nope]"}, ctx)
+        end)
+
+      assert text == ~s(Column "nope" in [Row-1:nope] isn't in the input. Check its spelling.)
+    end
+
+    test "a plain missing column doesn't offer the tool's own row number", %{t: t, ctx: ctx} do
+      text =
+        error(fn ->
+          Tools.MultiRowFormula.run(
+            %{"in" => t},
+            %{"as" => "x", "expr" => "nope + [Row-1:a]"},
+            ctx
+          )
+        end)
+
+      assert text =~ ~s(Column "nope" isn't in the input.)
+      refute text =~ "__ixpipe"
+    end
+
+    test "a multi-field formula on columns it can't apply to", %{t: t, ctx: ctx} do
+      text =
+        error(fn ->
+          Tools.MultiFieldFormula.run(%{"in" => t}, %{"expr" => "_current_ * 2"}, ctx)
+        end)
+
+      assert text =~ "* can't take values of types VARCHAR, INTEGER."
+      assert text =~ "CAST(column AS DOUBLE)"
+    end
+
+    test "a missing multi-field column", %{t: t, ctx: ctx} do
+      text =
+        error(fn ->
+          Tools.MultiFieldFormula.run(
+            %{"in" => t},
+            %{"columns" => ["nope"], "expr" => "_current_"},
+            ctx
+          )
+        end)
+
+      assert text == ~s(Column "nope" isn't in the input. Check its spelling.)
+    end
+  end
 end

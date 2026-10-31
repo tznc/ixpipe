@@ -66,4 +66,22 @@ defmodule IxpipeCore.ErrorsTest do
     assert Errors.humanize("something odd") ==
              "something odd. Check the tool's settings and run again."
   end
+
+  test "a tool's own message, already what happened and what to do, stays as it is" do
+    text = ~s(Column "nope" isn't in the input. Check its spelling.)
+    assert Errors.humanize(text) == text
+  end
+
+  test "candidates leave out ixpipe's own columns" do
+    raw = duck_error("SELECT nope FROM (SELECT 1 AS a, 2 AS __ixpipe_row)")
+    refute Errors.humanize(raw) =~ "__ixpipe"
+  end
+
+  test "an operator on a type it doesn't take" do
+    text = Errors.humanize(duck_error("SELECT 'a'::VARCHAR * 2"))
+
+    assert text ==
+             "* can't take values of types VARCHAR, INTEGER. " <>
+               "Choose columns of a type it takes, or cast them, e.g. CAST(column AS DOUBLE)."
+  end
 end

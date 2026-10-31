@@ -9,7 +9,7 @@ defmodule IxpipeApp.MainView do
   use Baguette.View
   import IxpipeApp.Components
 
-  alias IxpipeCore.{Config, Connections, Edit, Spec, Table, Tools}
+  alias IxpipeCore.{Config, Connections, Edit, Functions, Spec, Table, Tools}
 
   @node_width 200
   @port_y 24
@@ -20,6 +20,7 @@ defmodule IxpipeApp.MainView do
   # Narrower than this (a phone in portrait), the window shows one pane at
   # a time: Canvas, Properties, Results or Messages.
   @phone_width 640
+  @fn_categories ["all" | IxpipeCore.Functions.categories()]
   @panes [
     {"canvas", "Canvas"},
     {"properties", "Properties"},
@@ -47,18 +48,22 @@ defmodule IxpipeApp.MainView do
      ]},
     {"prepare", "Preparation",
      [
-       {"Columns", ~w(select formula data_cleansing auto_field imputation)},
-       {"Rows", ~w(filter sort sample unique)},
-       {"Sequence", ~w(record_id tile generate_rows)}
+       {"Columns", ~w(select data_cleansing auto_field imputation)},
+       {"Formula", ~w(formula multi_row_formula multi_field_formula)},
+       {"Rows", ~w(filter sort sample unique)}
      ]},
     {"join", "Join",
      [
        {"Combine", ~w(join union join_multiple append_fields)},
        {"Match", ~w(find_replace fuzzy_match)}
      ]},
-    {"parse", "Parse", [{"Split", ~w(text_to_columns regex)}]},
+    {"parse", "Parse", [{"Split", ~w(text_to_columns regex)}, {"Convert", ~w(date_time)}]},
     {"transform", "Transform",
-     [{"Aggregate", ~w(summarize running_total)}, {"Reshape", ~w(cross_tab transpose)}]}
+     [
+       {"Aggregate", ~w(summarize running_total)},
+       {"Sequence", ~w(record_id tile generate_rows)},
+       {"Reshape", ~w(cross_tab transpose)}
+     ]}
   ]
 
   def mount(args) do
@@ -81,6 +86,11 @@ defmodule IxpipeApp.MainView do
       drafts: %{},
       errors: %{},
       formula_rows: 1,
+      # The function reference's search and category, and the expression
+      # being typed: where inserts and completions go.
+      fn_query: "",
+      fn_category: nil,
+      typing: nil,
       past: [],
       future: [],
       last_step: nil,
@@ -175,7 +185,8 @@ defmodule IxpipeApp.MainView do
           </.ribbon_group>
         <% end %>
       </.ribbon>
-      <div class={"relative flex-1 " <> if(@phone, do: "flex-col", else: "flex-row")}>
+      <%!-- min-h-0: a long properties panel scrolls instead of pushing Results off the window. --%>
+      <div class={"relative flex-1 min-h-0 " <> if(@phone, do: "flex-col", else: "flex-row")}>
         <div :if={!@phone || @pane == "canvas"} class="flex-col flex-1 min-w-0">
         <div class="relative flex-1 overflow-hidden bg-canvas">
           <.empty_state :if={@spec.nodes == []} title="This workflow is empty">
@@ -239,7 +250,8 @@ defmodule IxpipeApp.MainView do
         <.messages :if={@phone && @pane == "messages"} run={@run} level={@level} spec={@spec} phone />
         <div :if={!@phone} class="w-px h-full bg-border" />
         <.properties :if={!@phone || @pane == "properties"} node={@node} drafts={@drafts} errors={@errors}
-          formula_rows={@formula_rows} dir={@dir} phone={@phone} />
+          formula_rows={@formula_rows} dir={@dir} phone={@phone} typing={@typing} fn_query={@fn_query}
+          fn_category={@fn_category} />
         <%!-- On a phone, over whichever pane shows. --%>
         <.feedback :if={@phone} toast={@toast} status={@status} phone />
       </div>
@@ -305,14 +317,45 @@ defmodule IxpipeApp.MainView do
     rows =
       for {"formula_" <> n, text} <- values, do: {String.to_integer(n), text}
 
+    "formula_" <> n = values["_target"]
     rows = rows |> Enum.sort() |> Enum.map(&elem(&1, 1))
-    text = rows |> Enum.map(&String.trim/1) |> Enum.reject(&(&1 == "")) |> Enum.join("\n")
-    {:noreply, configure(assigns, "formulas", text, rows)}
+    assigns = %{assigns | typing: {"formulas", String.to_integer(n)}}
+    {:noreply, configure(assigns, "formulas", formulas_text(rows), rows)}
   end
 
   def handle_event("config", %{"_target" => key} = values, assigns) do
     text = values[key] || ""
-    {:noreply, configure(assigns, key, text, text)}
+    {:noreply, configure(%{assigns | typing: key}, key, text, text)}
+  end
+
+  def handle_event("search_functions", values, assigns),
+    do: {:noreply, %{assigns | fn_query: values["query"] || ""}}
+
+  def handle_event("function_category", %{"category" => category}, assigns)
+      when category in @fn_categories,
+      do: {:noreply, %{assigns | fn_category: if(category != "all", do: category)}}
+
+  # Clicking a function in the reference adds its signature to the
+  # expression being typed; a completion replaces the word being typed with
+  # the function's name and an opening bracket.
+  def handle_event("insert_function", %{"name" => name}, assigns) do
+    case Enum.find(Functions.all(), &(&1.name == name)) do
+      nil -> {:noreply, assigns}
+      f -> {:noreply, insert(assigns, f.signature, :append)}
+    end
+  end
+
+  def handle_event("complete_function", %{"name" => name}, assigns) do
+    case Enum.find(Functions.all(), &(&1.name == name)) do
+      nil ->
+        {:noreply, assigns}
+
+      f ->
+        text =
+          if String.starts_with?(f.signature, f.name <> "("), do: f.name <> "(", else: f.signature
+
+        {:noreply, insert(assigns, text, :complete)}
+    end
   end
 
   def handle_event("choose", %{"key" => key, "value" => value}, assigns),
@@ -578,7 +621,74 @@ defmodule IxpipeApp.MainView do
   end
 
   defp select(assigns, id),
-    do: %{assigns | selected: id, output: nil, drafts: %{}, errors: %{}, formula_rows: 1}
+    do: %{
+      assigns
+      | selected: id,
+        output: nil,
+        drafts: %{},
+        errors: %{},
+        formula_rows: 1,
+        typing: nil
+    }
+
+  defp formulas_text(rows),
+    do: rows |> Enum.map(&String.trim/1) |> Enum.reject(&(&1 == "")) |> Enum.join("\n")
+
+  # Puts `text` into the expression being typed (else the tool's first
+  # expression, or its last formula row): after it (`:append`), or in place
+  # of the word at its end (`:complete`).
+  defp insert(assigns, text, how) do
+    node = Enum.find(assigns.spec.nodes, &(&1.id == assigns.selected))
+
+    case node && insert_target(assigns, node) do
+      nil ->
+        assigns
+
+      {"formulas", i} ->
+        lines = formula_lines(node, assigns.drafts)
+        count = max(length(lines), formula_rows(assigns))
+        rows = lines ++ List.duplicate("", count - length(lines))
+        rows = List.update_at(rows, i - 1, &put_text(&1, text, how))
+        configure(%{assigns | typing: {"formulas", i}}, "formulas", formulas_text(rows), rows)
+
+      key ->
+        field = Enum.find(node.tool.fields(), &(&1.key == key))
+        current = assigns.drafts[key] || Config.format(field, node.config[key])
+        new = put_text(current, text, how)
+        configure(%{assigns | typing: key}, key, new, new)
+    end
+  end
+
+  defp insert_target(assigns, node) do
+    fields = node.tool.fields()
+
+    case assigns.typing do
+      {"formulas", _} = row ->
+        if Enum.any?(fields, &(&1.type == :formulas)), do: row
+
+      key when is_binary(key) ->
+        if Enum.any?(fields, &(&1.key == key and &1.type == :expr)), do: key
+
+      nil ->
+        nil
+    end ||
+      Enum.find_value(fields, fn
+        %{type: :expr, key: key} -> key
+        %{type: :formulas} -> {"formulas", formula_rows(assigns)}
+        _ -> nil
+      end)
+  end
+
+  defp put_text(current, text, :complete),
+    do:
+      String.slice(current, 0, String.length(current) - String.length(Functions.word(current))) <>
+        text
+
+  defp put_text(current, text, :append) do
+    if current == "" or String.ends_with?(current, [" ", "("]),
+      do: current <> text,
+      else: current <> " " <> text
+  end
 
   # Applies a setting typed or chosen in the properties panel. What was typed
   # stays as a draft, so the input never rewrites it; an invalid value shows
@@ -866,6 +976,9 @@ defmodule IxpipeApp.MainView do
   attr(:formula_rows, :integer, required: true)
   attr(:dir, :string, required: true)
   attr(:phone, :boolean, default: false)
+  attr(:typing, :any, default: nil)
+  attr(:fn_query, :string, default: "")
+  attr(:fn_category, :string, default: nil)
 
   defp properties(assigns) do
     ~H"""
@@ -879,8 +992,11 @@ defmodule IxpipeApp.MainView do
       <.caption :if={@node && @node.tool.fields() == []}>This tool has no settings.</.caption>
       <form :if={@node} phx-change="config" aria-label="Settings" class="flex-col gap-3">
         <.field :for={field <- @node.tool.fields()} field={field} node={@node} drafts={@drafts}
-          error={@errors[field.key]} formula_rows={@formula_rows} dir={@dir} size={touch(@phone, :sm)} />
+          error={@errors[field.key]} formula_rows={@formula_rows} dir={@dir} size={touch(@phone, :sm)}
+          typing={@typing} />
       </form>
+      <.function_reference :if={@node && expressions?(@node)} query={@fn_query} category={@fn_category}
+        size={touch(@phone, :sm)} />
     </aside>
     """
   end
@@ -892,6 +1008,7 @@ defmodule IxpipeApp.MainView do
   attr(:formula_rows, :integer, required: true)
   attr(:dir, :string, default: nil)
   attr(:size, :atom, default: :sm)
+  attr(:typing, :any, default: nil)
 
   # A database tool's saved connection: the saved connections of its kind,
   # as choices, from connections.yaml in the workflows folder.
@@ -962,8 +1079,11 @@ defmodule IxpipeApp.MainView do
     ~H"""
     <div class="flex-col gap-1">
       <.label>{@field.label}</.label>
-      <input :for={{line, i} <- @lines} name={"formula_#{i}"} value={line}
-        placeholder="name = expression" aria-label={"Formula #{i}"} class="w-full" />
+      <%= for {line, i} <- @lines do %>
+        <input name={"formula_#{i}"} value={line}
+          placeholder="name = expression" aria-label={"Formula #{i}"} class="w-full" />
+        <.completions :if={@typing == {"formulas", i}} text={line} size={@size} />
+      <% end %>
       <.caption :if={@error} class="text-danger">{@error}</.caption>
       <.caption :if={!@error && @field[:hint]}>{@field.hint}</.caption>
       <div class="flex-row">
@@ -1007,11 +1127,74 @@ defmodule IxpipeApp.MainView do
       </div>
       <input name={@field.key} value={@drafts[@field.key] || Config.format(@field, @node.config[@field.key])}
         aria-label={@field.label} class="w-full" />
+      <.completions :if={@field.type == :expr && @typing == @field.key} text={@drafts[@field.key] || ""}
+        size={@size} />
       <.caption :if={@error} class="text-danger">{@error}</.caption>
       <.caption :if={!@error && @field[:hint]}>{@field.hint}</.caption>
     </div>
     """
   end
+
+  attr(:text, :string, required: true)
+  attr(:size, :atom, default: :sm)
+
+  # Functions whose name starts with the word being typed, to complete it.
+  defp completions(assigns) do
+    assigns = Map.put(assigns, :functions, Functions.complete(assigns.text))
+
+    ~H"""
+    <div :if={@functions != []} class="flex-row flex-wrap items-center gap-1" aria-label="Completions">
+      <.button :for={f <- @functions} variant={:quiet} size={@size} icon="square-function"
+        phx-click="complete_function" phx-value-name={f.name} aria-label={"Complete #{f.name}"}
+        title={f.description}>{f.name}</.button>
+    </div>
+    """
+  end
+
+  attr(:query, :string, default: "")
+  attr(:category, :string, default: nil)
+  attr(:size, :atom, default: :sm)
+
+  # A searchable reference of DuckDB functions, by category; clicking one
+  # inserts it into the expression being typed.
+  defp function_reference(assigns) do
+    assigns =
+      Map.merge(assigns, %{
+        functions: Functions.search(assigns.query, assigns.category),
+        categories: [
+          {"all", "All"} | for(c <- Functions.categories(), do: {c, String.capitalize(c)})
+        ]
+      })
+
+    ~H"""
+    <section class="flex-col gap-3" aria-label="Function reference">
+      <div class="flex-col gap-1">
+        <.section>Functions</.section>
+        <.caption>Click a function to insert it into the expression.</.caption>
+      </div>
+      <input name="query" value={@query} phx-change="search_functions" placeholder="Search functions"
+        aria-label="Search functions" class="w-full" />
+      <div class="flex-row flex-wrap gap-1">
+        <.button :for={{key, label} <- @categories} size={@size} phx-click="function_category"
+          phx-value-category={key} aria-label={"Functions: #{key}"}
+          class={if (@category || "all") == key, do: "border-primary bg-primary/12", else: ""}>
+          {label}
+        </.button>
+      </div>
+      <.caption :if={@functions == []}>No functions match. Try another word or category.</.caption>
+      <div :for={f <- @functions} class="flex-col">
+        <div class="flex-row">
+          <.button variant={:quiet} size={@size} class="px-0" phx-click="insert_function" phx-value-name={f.name}
+            aria-label={"Insert #{f.name}"} title="Insert into the expression">{f.signature}</.button>
+        </div>
+        <.caption>{f.description}</.caption>
+        <.caption>{f.example} → {f.result}</.caption>
+      </div>
+    </section>
+    """
+  end
+
+  defp expressions?(node), do: Enum.any?(node.tool.fields(), &(&1.type in [:expr, :formulas]))
 
   defp chosen(field, node), do: node.config[field.key] || hd(field.options)
 
@@ -1062,6 +1245,9 @@ defmodule IxpipeApp.MainView do
     "regex" => "RegEx",
     "data_cleansing" => "Data cleansing",
     "input_postgres" => "Input Postgres",
+    "multi_row_formula" => "Multi-row formula",
+    "multi_field_formula" => "Multi-field formula",
+    "date_time" => "DateTime",
     "record_id" => "Record ID",
     "running_total" => "Running total",
     "generate_rows" => "Generate rows",
@@ -1095,6 +1281,9 @@ defmodule IxpipeApp.MainView do
     "summarize" => "sigma",
     "cross_tab" => "table-2",
     "transpose" => "arrow-left-right",
+    "multi_row_formula" => "rows-3",
+    "multi_field_formula" => "columns-4",
+    "date_time" => "calendar-clock",
     "record_id" => "hash",
     "running_total" => "trending-up",
     "tile" => "chart-column-stacked",
@@ -1117,9 +1306,16 @@ defmodule IxpipeApp.MainView do
   defp ribbon_groups(tab),
     do: Enum.find_value(@ribbon, [], fn {key, _, groups} -> key == tab && groups end)
 
-  # In the Input and Output groups the group names the direction: "CSV".
+  # In the Input and Output groups the group names the direction: "CSV";
+  # in the Formula group, the kind: "Multi-row".
+  # A ribbon command's short noun: the tool's label less its group's name
+  # ("CSV" in Input), or a shorter one where the group already says it.
+  @commands %{"multi_row_formula" => "Multi-row", "multi_field_formula" => "Multi-field"}
   defp command_label(group, tool),
-    do: tool |> tool_label() |> String.replace_prefix(group <> " ", "")
+    do:
+      Map.get_lazy(@commands, tool, fn ->
+        tool |> tool_label() |> String.replace_prefix(group <> " ", "")
+      end)
 
   defp phone?(%{width: width}), do: is_integer(width) and width < @phone_width
   defp panes, do: @panes
