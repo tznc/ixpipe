@@ -3,13 +3,15 @@ defmodule IxpipeCore.Tools.InputExcel do
   Reads a sheet of an Excel workbook (.xlsx). Config: `path`, optional
   `sheet` (default: the first), `range` (cells like `B3:F20`, or `B3:F` to
   the sheet's end; default: the whole sheet) and `header` (default true:
-  the first row names the columns). Blank rows are left out. Columns of whole numbers become integers, other
+  the first row names the columns). Blank rows are left out. Error cells
+  (#DIV/0!, #N/A, …) become empty with a warning naming the first, by its
+  place in the sheet. Columns of whole numbers become integers, other
   numbers floats, dates dates, and anything else text. An empty sheet is
   one empty text column, `column_1`.
   """
   @behaviour IxpipeCore.Tool
 
-  alias IxpipeCore.Context
+  alias IxpipeCore.{Context, Warnings}
 
   @impl true
   def inputs, do: []
@@ -49,7 +51,16 @@ defmodule IxpipeCore.Tools.InputExcel do
 
   @impl true
   def run(_inputs, %{"path" => path} = config, ctx) do
-    {:ok, package} = XlsxReader.open(path)
+    package =
+      case XlsxReader.open(path) do
+        {:ok, package} ->
+          package
+
+        {:error, reason} ->
+          raise "#{path} can't be opened as an Excel workbook: #{reason}. " <>
+                  "Choose an .xlsx file that exists."
+      end
+
     sheets = XlsxReader.sheet_names(package)
     sheet = config["sheet"] || List.first(sheets)
 
@@ -57,8 +68,16 @@ defmodule IxpipeCore.Tools.InputExcel do
       do: raise("No sheet named #{sheet}. Sheets: #{Enum.join(sheets, ", ")}")
 
     range = range!(config["range"])
-    {:ok, rows} = XlsxReader.sheet(package, sheet, blank_value: nil, empty_rows: range != nil)
-    rows = rows |> cells(range) |> Enum.reject(fn row -> Enum.all?(row, &(&1 in [nil, ""])) end)
+    # With empty rows, a row's place in the list is its place in the sheet,
+    # so a warning can name a cell.
+    {:ok, rows} = XlsxReader.sheet(package, sheet, blank_value: nil, empty_rows: true)
+
+    rows =
+      rows
+      |> cells(range)
+      |> unreadable(ctx, origin(range))
+      |> Enum.reject(fn row -> Enum.all?(row, &(&1 in [nil, ""])) end)
+
     width = rows |> Enum.map(&length/1) |> Enum.max(fn -> 0 end)
     rows = Enum.map(rows, &(&1 ++ List.duplicate(nil, width - length(&1))))
 
@@ -79,7 +98,9 @@ defmodule IxpipeCore.Tools.InputExcel do
     columns =
       if rows == [], do: List.duplicate([], length(names)), else: Enum.zip_with(rows, & &1)
 
-    Context.table(ctx, Enum.zip_with(names, columns, &{&1, column(&2)}))
+    table = Context.table(ctx, Enum.zip_with(names, columns, &{&1, column(&2)}))
+    Warnings.numbers_as_text(ctx, table)
+    table
   end
 
   @doc "Suggested values for a setting: the workbook's sheets for `sheet`."
@@ -117,6 +138,10 @@ defmodule IxpipeCore.Tools.InputExcel do
   defp row(""), do: nil
   defp row(digits), do: String.to_integer(digits) - 1
 
+  # The sheet's {column, row}, 0-based, of the range's first cell.
+  defp origin(nil), do: {0, 0}
+  defp origin({c1, r1, _c2, _r2}), do: {c1, r1}
+
   defp cells(rows, nil), do: rows
 
   defp cells(rows, {c1, r1, c2, r2}) do
@@ -128,6 +153,40 @@ defmodule IxpipeCore.Tools.InputExcel do
       if c2, do: Enum.take(row ++ List.duplicate(nil, c2 - c1 + 1), c2 - c1 + 1), else: row
     end)
   end
+
+  # Excel's error values (#DIV/0!, #N/A, …) and cells the reader couldn't
+  # convert (#ERROR) become empty, with a warning naming the first.
+  @errors ~w(#ERROR #DIV/0! #N/A #NAME? #NULL! #NUM! #REF! #VALUE! #SPILL! #CALC! #GETTING_DATA)
+  defp unreadable(rows, ctx, {c0, r0}) do
+    bad =
+      for {row, r} <- Enum.with_index(rows, r0 + 1),
+          {value, c} <- Enum.with_index(row, c0),
+          value in @errors,
+          do: {value, cell_name(c, r)}
+
+    case bad do
+      [] ->
+        rows
+
+      [{value, cell} | _] ->
+        cells =
+          if length(bad) == 1,
+            do: "1 cell couldn't be read and is",
+            else: "#{length(bad)} cells couldn't be read and are"
+
+        Context.warn(
+          ctx,
+          "#{cells} empty (#{value} in #{cell}). Fix the formulas in the workbook, or fill the gaps with Data cleansing."
+        )
+
+        Enum.map(rows, &Enum.map(&1, fn v -> if v in @errors, do: nil, else: v end))
+    end
+  end
+
+  # 0-based column, 1-based row: {0, 1} is A1, {27, 3} is AB3.
+  defp cell_name(c, r), do: column_letters(c) <> Integer.to_string(r)
+  defp column_letters(c) when c < 26, do: <<?A + c>>
+  defp column_letters(c), do: column_letters(div(c, 26) - 1) <> <<?A + rem(c, 26)>>
 
   defp generated(width), do: for(i <- 1..width//1, do: "column_#{i}")
 

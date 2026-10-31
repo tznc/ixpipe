@@ -14,5 +14,5 @@ defmodule IxpipeCore.Tools.OutputMysql do
   def fields, do: IxpipeCore.Server.output_fields("mysql")
 
   @impl true
-  def run(%{"in" => t}, config, _ctx), do: IxpipeCore.Server.write("mysql", t, config)
+  def run(%{"in" => t}, config, ctx), do: IxpipeCore.Server.write("mysql", t, config, ctx)
 end

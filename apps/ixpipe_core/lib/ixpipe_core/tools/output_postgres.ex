@@ -14,5 +14,5 @@ defmodule IxpipeCore.Tools.OutputPostgres do
   def fields, do: IxpipeCore.Server.output_fields("postgres")
 
   @impl true
-  def run(%{"in" => t}, config, _ctx), do: IxpipeCore.Server.write("postgres", t, config)
+  def run(%{"in" => t}, config, ctx), do: IxpipeCore.Server.write("postgres", t, config, ctx)
 end

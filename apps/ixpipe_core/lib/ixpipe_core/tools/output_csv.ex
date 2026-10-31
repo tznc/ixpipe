@@ -1,7 +1,7 @@
 defmodule IxpipeCore.Tools.OutputCsv do
   @moduledoc """
   Writes its input to a CSV file, local or in cloud storage (see
-  `IxpipeCore.Cloud`), and passes it through. Config: `path`, optional
+  `IxpipeCore.Cloud`), says how many rows it wrote, and passes it through. Config: `path`, optional
   `connection`.
   """
   @behaviour IxpipeCore.Tool
@@ -13,5 +13,5 @@ defmodule IxpipeCore.Tools.OutputCsv do
   def fields, do: IxpipeCore.Files.output_fields("CSV", "csv")
 
   @impl true
-  def run(%{"in" => t}, config, _ctx), do: IxpipeCore.Files.write(t, config, "HEADER")
+  def run(%{"in" => t}, config, ctx), do: IxpipeCore.Files.write(t, config, "HEADER", ctx)
 end

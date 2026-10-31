@@ -133,6 +133,16 @@ for server <- servers do
       assert Enum.map(cols["tags"], &(&1 && Jason.decode!(&1))) == [[1, 2], [], nil]
     end
 
+    test "says how many rows it wrote and where", %{config: config} do
+      ctx = Context.new("out")
+      @output.run(%{"in" => source(ctx)}, Map.put(config, "table", "ixpipe_said"), ctx)
+
+      assert "Wrote 3 rows to table ixpipe_said in warehouse." in for(
+               %{level: :info, text: t} <- Context.messages(ctx),
+               do: t
+             )
+    end
+
     test "replaces the table by default, or appends to it", %{ctx: ctx, config: config} do
       config = Map.put(config, "table", "ixpipe_written")
       one = Table.new(ctx.db, "one", id: [1], name: ["a"])

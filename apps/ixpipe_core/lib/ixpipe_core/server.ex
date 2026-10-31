@@ -10,7 +10,7 @@ defmodule IxpipeCore.Server do
   SQL Server take batched multi-row `INSERT`s, in one transaction.
   """
 
-  alias IxpipeCore.{Connections, Database, Duck, Table}
+  alias IxpipeCore.{Connections, Context, Database, Duck, Table}
 
   @kinds ~w(postgres mysql sqlserver)
   @names %{"postgres" => "Postgres", "mysql" => "MySQL", "sqlserver" => "SQL Server"}
@@ -86,8 +86,11 @@ defmodule IxpipeCore.Server do
     Database.table(ctx, columns, rows, uuids: kind)
   end
 
-  @doc "Writes `table` to the server table `config` names, passing it through."
-  def write(kind, %Table{} = table, config) do
+  @doc """
+  Writes `table` to the server table `config` names, saying how many rows
+  went where, and passes it through.
+  """
+  def write(kind, %Table{} = table, config, ctx) do
     conn = connection!(kind, config)
     target = target!(kind, config["table"])
     replace = (config["mode"] || "replace") == "replace"
@@ -112,6 +115,11 @@ defmodule IxpipeCore.Server do
         load!(kind, pid, target, table, names, dtypes)
       end)
     end)
+
+    Context.info(
+      ctx,
+      "Wrote #{IxpipeCore.plural(Table.count(table), "row")} to table #{config["table"]} in #{conn["name"]}."
+    )
 
     table
   end

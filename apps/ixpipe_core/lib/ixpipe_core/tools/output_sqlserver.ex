@@ -14,5 +14,5 @@ defmodule IxpipeCore.Tools.OutputSqlserver do
   def fields, do: IxpipeCore.Server.output_fields("sqlserver")
 
   @impl true
-  def run(%{"in" => t}, config, _ctx), do: IxpipeCore.Server.write("sqlserver", t, config)
+  def run(%{"in" => t}, config, ctx), do: IxpipeCore.Server.write("sqlserver", t, config, ctx)
 end

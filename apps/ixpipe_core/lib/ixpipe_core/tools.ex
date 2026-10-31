@@ -32,7 +32,17 @@ defmodule IxpipeCore.Tools do
     "transpose" => IxpipeCore.Tools.Transpose,
     "text_to_columns" => IxpipeCore.Tools.TextToColumns,
     "regex" => IxpipeCore.Tools.Regex,
-    "data_cleansing" => IxpipeCore.Tools.DataCleansing
+    "data_cleansing" => IxpipeCore.Tools.DataCleansing,
+    "record_id" => IxpipeCore.Tools.RecordId,
+    "running_total" => IxpipeCore.Tools.RunningTotal,
+    "tile" => IxpipeCore.Tools.Tile,
+    "generate_rows" => IxpipeCore.Tools.GenerateRows,
+    "imputation" => IxpipeCore.Tools.Imputation,
+    "auto_field" => IxpipeCore.Tools.AutoField,
+    "find_replace" => IxpipeCore.Tools.FindReplace,
+    "append_fields" => IxpipeCore.Tools.AppendFields,
+    "join_multiple" => IxpipeCore.Tools.JoinMultiple,
+    "fuzzy_match" => IxpipeCore.Tools.FuzzyMatch
   }
 
   @spec lookup(term()) :: module() | nil
@@ -45,6 +55,13 @@ defmodule IxpipeCore.Tools do
   def outputs(tool) do
     Code.ensure_loaded(tool)
     if function_exported?(tool, :outputs, 0), do: tool.outputs(), else: ["out"]
+  end
+
+  @doc "The input ports a node of `tool` may leave unconnected; `[]` unless it declares some."
+  @spec optional_inputs(module()) :: [String.t()]
+  def optional_inputs(tool) do
+    Code.ensure_loaded(tool)
+    if function_exported?(tool, :optional_inputs, 0), do: tool.optional_inputs(), else: []
   end
 
   @spec name(module()) :: String.t()

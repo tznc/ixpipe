@@ -24,11 +24,12 @@ defmodule IxpipeCore.Tools.OutputJson do
       ])
 
   @impl true
-  def run(%{"in" => t}, config, _ctx),
+  def run(%{"in" => t}, config, ctx),
     do:
       IxpipeCore.Files.write(
         t,
         config,
-        if(config["lines"] == true, do: "FORMAT json", else: "FORMAT json, ARRAY true")
+        if(config["lines"] == true, do: "FORMAT json", else: "FORMAT json, ARRAY true"),
+        ctx
       )
 end
