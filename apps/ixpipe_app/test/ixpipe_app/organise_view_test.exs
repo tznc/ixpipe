@@ -118,8 +118,14 @@ defmodule IxpipeApp.OrganiseViewTest do
     Test.click(w, "Run workflow")
     assert Test.text(w) =~ "Run succeeded"
     assert Test.text(w) =~ "2 tools skipped"
-    # A badge on each skipped card.
-    assert length(String.split(Test.text(w), "Skipped")) == 3
+    # A badge on each skipped card, and Results says why sorted didn't run.
+    assert Test.text(w) =~ "Skipped: disabled. Enable it and run again."
+    assert length(String.split(Test.text(w), "Skipped")) == 4
+    # Messages says why each was skipped, as an info message.
+    Test.click(w, "Messages tab")
+
+    assert Test.text(w) =~
+             "Skipped: after sorted, which is disabled. Enable sorted and run again."
 
     Test.click(w, "Enable tool")
     refute item(pid, "sorted").disabled

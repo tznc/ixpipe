@@ -361,10 +361,11 @@ defmodule IxpipeCore.Spec do
 
     Enum.find_value(nodes, :ok, fn node ->
       expected = node.tool.inputs()
+      required = expected -- IxpipeCore.Tools.optional_inputs(node.tool)
       got = node.inputs |> Map.keys() |> Enum.sort()
 
       cond do
-        Enum.sort(expected) != got ->
+        required -- got != [] or got -- expected != [] ->
           {:error, {:bad_ports, node.id, expected: expected, got: got}}
 
         missing = Enum.find(Map.values(node.inputs), &(elem(source(&1), 0) not in ids)) ->

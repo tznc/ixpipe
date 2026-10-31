@@ -109,6 +109,39 @@ defmodule IxpipeCore.OrganiseTest do
       assert Table.count(results["slim"]) == 4
     end
 
+    test "execute/2 marks them skipped, with an info message saying why" do
+      {:ok, spec} =
+        spec!()
+        |> Edit.add_container(%{"x" => 0, "y" => 0}, ["slim"])
+        |> Edit.set_text("container_1", "Columns")
+        |> Edit.set_disabled("container_1", true)
+        |> Edit.set_disabled("sorted", true)
+        |> Spec.validate()
+
+      run = IxpipeCore.execute(spec)
+      assert run.status == :ok
+
+      assert run.nodes == %{
+               "orders" => :ok,
+               "sorted" => :skipped,
+               "top" => :skipped,
+               "slim" => :skipped
+             }
+
+      assert Enum.sort(run.disabled) == ["slim", "sorted", "top"]
+      assert Map.keys(run.tables) == ["orders"]
+
+      why = fn id -> for %{node: ^id, level: :info, text: t} <- run.messages, do: t end
+      assert [sorted] = why.("sorted")
+      assert sorted =~ "Skipped: disabled."
+      assert [slim] = why.("slim")
+      assert slim =~ "Skipped: in disabled container Columns."
+      assert [top] = why.("top")
+      assert top =~ "Skipped: after sorted, which is disabled."
+      # Not the wording of a tool skipped because one upstream failed.
+      refute Enum.any?(run.messages, &(&1.text =~ "failed"))
+    end
+
     test "a run with every tool disabled succeeds with no results" do
       spec = Enum.reduce(~w(orders), spec!(), &Edit.set_disabled(&2, &1, true))
       {:ok, spec} = Spec.validate(spec)
