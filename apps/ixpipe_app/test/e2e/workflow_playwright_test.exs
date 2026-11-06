@@ -49,6 +49,9 @@ defmodule IxpipeApp.E2E.WorkflowPlaywrightTest do
     Playwright.click(page, role: "tab", name: "Preparation tab")
     Playwright.click(page, "Add sort")
     assert :ok = Playwright.await(page, role: "button", name: "Select sort_1")
+    Playwright.click(page, "Save workflow")
+    assert :ok = Playwright.await_text(page, "Saved e2e.yaml")
+    x0 = sort_x(workflow)
 
     Playwright.drag(page, "sort_1", 220, 0)
     Playwright.click(page, "Connect from orders")
@@ -63,6 +66,11 @@ defmodule IxpipeApp.E2E.WorkflowPlaywrightTest do
     assert [_orders, %{id: "sort_1", inputs: %{"in" => "orders"}, position: %{"x" => x}}] =
              spec.nodes
 
-    assert_in_delta x, 290, 2
+    assert_in_delta x, x0 + 220, 2
+  end
+
+  defp sort_x(workflow) do
+    {:ok, spec} = workflow |> File.read!() |> IxpipeCore.Spec.decode()
+    Enum.find(spec.nodes, &(&1.id == "sort_1")).position["x"]
   end
 end

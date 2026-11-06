@@ -11,6 +11,8 @@ defmodule IxpipeApp.QA.CodeTest do
 
   setup do
     qa = QA.launch!(open: "sales.yaml")
+    # Room beside the sales workflow's cards for the tools these tests add.
+    :ok = Playwright.resize(qa.page, 1600, 1000)
     on_exit(fn -> QA.stop(qa) end)
     qa
   end
@@ -64,10 +66,10 @@ defmodule IxpipeApp.QA.CodeTest do
   test "a failing script: the callout says what happened, Results the traceback", %{page: page} do
     python(page, ["x = 1", "output = x / 0"])
     Playwright.click(page, "Run workflow")
-    assert :ok = Playwright.await_text(page, "python_1 failed.")
+    assert :ok = Playwright.await_text(page, "Failed at python_1.")
 
     QA.capture(page, "code-03-error", [
-      "A red-tinted callout bottom-left titled 'python_1 failed.' reading 'Python raised ZeroDivisionError on line 2: division by zero. Fix the script and run again.'",
+      "A red-tinted callout bottom-left titled 'Failed at python_1.' reading 'Python raised ZeroDivisionError on line 2: division by zero. Fix the script and run again.'",
       "Results, under the canvas, shows the traceback in monospace, naming script.py line 2",
       "The callout holds no traceback; nothing in the layout moved"
     ])

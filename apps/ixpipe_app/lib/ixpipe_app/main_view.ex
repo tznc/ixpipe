@@ -25,6 +25,8 @@ defmodule IxpipeApp.MainView do
   alias IxpipeCore.Tools.Select
 
   @node_width 200
+  # Room a new card needs: a tool with its In and Out rows.
+  @new_card_height 170
   @port_y 24
   # A container's padding around its tools, its title bar, and its size when
   # empty or collapsed.
@@ -431,16 +433,19 @@ defmodule IxpipeApp.MainView do
     {:noreply, %{assigns | toast: "Saved #{Path.basename(assigns.path)}"}}
   end
 
-  # With a container selected, the new tool goes inside it.
+  # With a container selected, the new tool goes inside it; otherwise in the
+  # first open space, never on top of another card (where clicks on its
+  # connectors would land on that card).
   def handle_event("add", %{"tool" => tool}, assigns) do
     {at, container} =
       case Edit.find(assigns.spec, assigns.selected) do
         %Spec.Container{} = c -> {inside(assigns.spec, c), c.id}
-        _ -> {free_spot(assigns.spec), nil}
+        _ -> {new_spot(assigns), nil}
       end
 
     assigns = edit(assigns, &Edit.add_node(&1, tool, at, container))
-    {:noreply, select(assigns, List.last(assigns.spec.nodes).id)}
+    id = List.last(assigns.spec.nodes).id
+    {:noreply, assigns |> reveal(id) |> select(id)}
   end
 
   # With a tool selected, the new container holds it.
@@ -929,22 +934,93 @@ defmodule IxpipeApp.MainView do
   defp clear_run(assigns),
     do: %{assigns | rows: %{}, results: %{}, run: nil, grid: nil, profile: nil}
 
+  # Pans so tool `id`'s card is in view when it isn't, near the canvas's top
+  # left. The visible canvas is the window less its fixed chrome: on a wide
+  # window the properties panel (320px), the header and ribbon (at most
+  # 210px with two ribbon rows) and Results (280px); on a phone the header,
+  # ribbon and tab bar. Without a window size it leaves the view alone.
+  defp reveal(%{width: width, height: height, zoom: zoom, pan: {px, py}} = assigns, id)
+       when is_integer(width) and is_integer(height) do
+    %{position: %{"x" => x, "y" => y}} = Enum.find(assigns.spec.nodes, &(&1.id == id))
+
+    {view_w, view_h} = view_size(assigns)
+
+    {sx, sy} = {scaled(x + px, zoom), scaled(y + py, zoom)}
+    {w, h} = {scaled(@node_width, zoom), scaled(@new_card_height, zoom)}
+
+    if sx >= 0 and sy >= 0 and sx + w <= view_w and sy + h <= view_h do
+      assigns
+    else
+      margin = round(20 * 100 / zoom)
+      %{assigns | pan: {margin - x, margin - y}}
+    end
+  end
+
+  defp reveal(assigns, _id), do: assigns
+
   # Where something new goes: a step down and right for each thing there.
   defp free_spot(spec) do
     n = length(spec.nodes) + length(spec.containers) + length(spec.comments)
     %{"x" => 40 + 30 * n, "y" => 40 + 30 * n}
   end
 
+  # Where a new tool goes: open space in view, when the window's size is
+  # known and there is some; else the first open space anywhere (and
+  # `reveal/2` pans to it).
+  defp new_spot(assigns) do
+    size = {@node_width, @new_card_height}
+
+    case view(assigns) do
+      nil ->
+        open_space(assigns.spec, size)
+
+      {x0, y0, x1, y1} ->
+        spots =
+          for y <- y0..max(y1 - @new_card_height, y0)//20,
+              x <- x0..max(x1 - @node_width, x0)//20,
+              do: {x, y}
+
+        open_spot(assigns.spec, size, spots) || open_space(assigns.spec, size)
+    end
+  end
+
+  # The canvas area in view, `{x0, y0, x1, y1}` in canvas coordinates, or
+  # nil without a window size (see `reveal/2` for the chrome around it).
+  defp view(%{width: width, height: height, zoom: zoom, pan: {px, py}} = assigns)
+       when is_integer(width) and is_integer(height) do
+    {w, h} = view_size(assigns)
+    unscale = &round(&1 * 100 / zoom)
+    {max(-px, 0) + 20, max(-py, 0), -px + unscale.(w), -py + unscale.(h)}
+  end
+
+  defp view(_assigns), do: nil
+
+  defp view_size(%{width: width, height: height} = assigns),
+    do: if(phone?(assigns), do: {width, height - 260}, else: {width - 321, height - 491})
+
   # The first spot, top to bottom and left to right, where a `{width,
   # height}` box clears everything on the canvas; else below it all.
-  defp open_space(spec, {w, h}) do
+  defp open_space(spec, size) do
+    case open_spot(spec, size, for(y <- 0..600//20, x <- 20..820//20, do: {x, y})) do
+      nil ->
+        bottom =
+          Enum.max(Enum.map(extents(spec, 100, %{}), &(elem(&1, 1) + elem(&1, 3))), fn -> 0 end)
+
+        %{"x" => 40, "y" => bottom + 24}
+
+      at ->
+        at
+    end
+  end
+
+  # The first of `spots` where a `{width, height}` box clears everything.
+  defp open_spot(spec, {w, h}, spots) do
     taken = extents(spec, 100, %{})
     clear? = fn {x, y} -> Enum.all?(taken, &(not overlap?({x, y, w, h}, &1))) end
-    bottom = Enum.max(Enum.map(taken, &(elem(&1, 1) + elem(&1, 3))), fn -> 0 end)
 
-    case Enum.find(for(y <- 0..600//20, x <- 20..820//20, do: {x, y}), clear?) do
+    case Enum.find(spots, clear?) do
       {x, y} -> %{"x" => x, "y" => y}
-      nil -> %{"x" => 40, "y" => bottom + 24}
+      nil -> nil
     end
   end
 

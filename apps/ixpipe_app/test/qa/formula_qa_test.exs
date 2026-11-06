@@ -64,7 +64,6 @@ defmodule IxpipeApp.QA.FormulaTest do
 
       Playwright.click(page, role: "tab", name: "Preparation tab")
       Playwright.click(page, "Add multi_row_formula")
-      Playwright.drag(page, "multi_row_formula_1", 210, -40)
       Playwright.click(page, "Connect from input_csv_1")
       Playwright.click(page, "Connect to multi_row_formula_1 in")
       Playwright.click(page, "Select multi_row_formula_1")
@@ -75,7 +74,6 @@ defmodule IxpipeApp.QA.FormulaTest do
 
       Playwright.click(page, role: "tab", name: "Parse tab")
       Playwright.click(page, "Add date_time")
-      Playwright.drag(page, "date_time_1", 410, 60)
       Playwright.click(page, "Connect from multi_row_formula_1")
       Playwright.click(page, "Connect to date_time_1 in")
       Playwright.click(page, "Select date_time_1")
@@ -83,7 +81,8 @@ defmodule IxpipeApp.QA.FormulaTest do
       Playwright.fill(page, "Format", "dd/MM/yyyy")
 
       Playwright.click(page, "Run workflow")
-      assert :ok = Playwright.await_text(page, "Run succeeded")
+      # DateTime warns that the ids aren't dates (they go to its failed output).
+      assert :ok = Playwright.await_text(page, "Ran with 1 warning")
       Playwright.click(page, "Select multi_row_formula_1")
       assert :ok = Playwright.await_text(page, "multi_row_formula_1 · 4 rows")
 

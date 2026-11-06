@@ -9,6 +9,8 @@ defmodule IxpipeApp.QA.SelectBrowseTest do
 
   setup do
     qa = QA.launch!(open: "sales.yaml")
+    # Room beside the sales workflow's cards for the tools these tests add.
+    :ok = Playwright.resize(qa.page, 1600, 1000)
     on_exit(fn -> QA.stop(qa) end)
     assert :ok = Playwright.await_text(qa.page, "customers")
     qa
@@ -89,7 +91,7 @@ defmodule IxpipeApp.QA.SelectBrowseTest do
     Playwright.click(page, "Cast name to BIGINT")
     Playwright.click(page, "Run workflow")
     assert :ok = Playwright.await_text(page, "Ran with 1 warning")
-    Playwright.click(page, "Messages tab")
+    Playwright.click(page, role: "tab", name: "Messages tab")
     Playwright.click(page, "Show warnings")
 
     QA.capture(page, "select-03-warning", [
