@@ -206,8 +206,10 @@ defmodule IxpipeApp.SelectBrowseTest do
       Test.click(w, "Show profile")
       assert Test.text(w) =~ "Rome (80), Oslo (40)"
 
+      # The failed tool's Results shows its error in full.
       Test.click(w, "Select bad")
-      assert Test.text(w) =~ "Run the workflow to see this tool's results."
+      assert Test.text(w) =~ ~s(Referenced column "nope" not found)
+      refute Test.text(w) =~ "Run the workflow to see this tool's results."
     end
 
     test "on a phone, Results browses too, with touch-size controls", %{w: w} do

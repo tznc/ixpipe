@@ -32,6 +32,7 @@ defmodule IxpipeApp.UI do
     "Join tab",
     "Parse tab",
     "Transform tab",
+    "Code tab",
     "Macros tab"
   ]
 

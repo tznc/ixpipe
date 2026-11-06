@@ -48,7 +48,9 @@ defmodule IxpipeCore.Tools do
     "fuzzy_match" => IxpipeCore.Tools.FuzzyMatch,
     "macro_input" => IxpipeCore.Tools.MacroInput,
     "macro_output" => IxpipeCore.Tools.MacroOutput,
-    "macro" => IxpipeCore.Tools.Macro
+    "macro" => IxpipeCore.Tools.Macro,
+    "python" => IxpipeCore.Tools.Python,
+    "script" => IxpipeCore.Tools.Script
   }
 
   @spec lookup(term()) :: module() | nil

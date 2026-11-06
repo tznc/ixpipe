@@ -12,6 +12,7 @@ defmodule IxpipeApp.RibbonViewTest do
     "Join tab",
     "Parse tab",
     "Transform tab",
+    "Code tab",
     "Macros tab"
   ]
 

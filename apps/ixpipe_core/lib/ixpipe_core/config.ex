@@ -7,6 +7,7 @@ defmodule IxpipeCore.Config do
   | Type | Text | Value |
   | --- | --- | --- |
   | `:string`, `:path`, `:expr` | trimmed text | the text |
+  | `:code` | lines of code | the text, without trailing blank lines |
   | `:list` | `id, amount` | `["id", "amount"]` |
   | `:bool` | `true` / `false` | a boolean |
   | `:choice` | one of `options` | the text |
@@ -23,6 +24,7 @@ defmodule IxpipeCore.Config do
           :string
           | :path
           | :expr
+          | :code
           | :list
           | :bool
           | :choice
@@ -67,6 +69,8 @@ defmodule IxpipeCore.Config do
   def parse(field, text) do
     case String.trim(text) do
       "" -> if field[:optional], do: {:ok, nil}, else: {:error, "Required"}
+      # Code keeps its leading indentation.
+      _ when field.type == :code -> {:ok, String.trim_trailing(text)}
       text -> parse_text(field, text)
     end
   end

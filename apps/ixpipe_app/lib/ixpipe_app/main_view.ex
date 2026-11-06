@@ -9,7 +9,19 @@ defmodule IxpipeApp.MainView do
   use Baguette.View
   import IxpipeApp.Components
 
-  alias IxpipeCore.{Config, Connections, Edit, Functions, Macro, Profile, Spec, Table, Tools}
+  alias IxpipeCore.{
+    Config,
+    Connections,
+    Edit,
+    Functions,
+    Macro,
+    Profile,
+    Script,
+    Spec,
+    Table,
+    Tools
+  }
+
   alias IxpipeCore.Tools.Select
 
   @node_width 200
@@ -82,6 +94,7 @@ defmodule IxpipeApp.MainView do
        {"Sequence", ~w(record_id tile generate_rows)},
        {"Reshape", ~w(cross_tab transpose)}
      ]},
+    {"code", "Code", [{"Code", ~w(python script)}]},
     # Macro tools are added here; a macro itself is used with "Use a macro…".
     {"macros", "Macros", [{"Macros", ~w(macro_input macro_output)}]}
   ]
@@ -122,6 +135,9 @@ defmodule IxpipeApp.MainView do
       fn_query: "",
       fn_category: nil,
       typing: nil,
+      code_rows: 1,
+      # On a phone (Android, iOS), Script can't start other programs.
+      mobile: Keyword.get_lazy(args, :mobile, &Baguette.mobile?/0),
       past: [],
       future: [],
       last_step: nil,
@@ -322,16 +338,16 @@ defmodule IxpipeApp.MainView do
         <div :if={!@phone} class="h-px w-full bg-border" />
         <.results :if={!@phone && @panel == "results"} node={@node} output={@node && output_key(@node, @output)}
           total={@node && @rows[output_key(@node, @output)]} grid={@grid} profile={@profile} browse={@browse}
-          skip={skip_reason(@run, @node)} />
+          skip={skip_reason(@run, @node)} failure={failure(@run, @node)} />
         <.messages :if={!@phone && @panel == "messages"} run={@run} level={@level} spec={@spec} />
         </div>
         <.results :if={@phone && @pane == "results"} node={@node} output={@node && output_key(@node, @output)}
           total={@node && @rows[output_key(@node, @output)]} grid={@grid} profile={@profile} browse={@browse}
-          skip={skip_reason(@run, @node)} phone />
+          skip={skip_reason(@run, @node)} failure={failure(@run, @node)} phone />
         <.messages :if={@phone && @pane == "messages"} run={@run} level={@level} spec={@spec} phone />
         <div :if={!@phone} class="w-px h-full bg-border" />
         <.properties :if={!@phone || @pane == "properties"} node={@node} item={@item} drafts={@drafts} errors={@errors}
-          formula_rows={@formula_rows} dir={@dir} phone={@phone} containers={@spec.containers} off={@off}
+          formula_rows={@formula_rows} code_rows={@code_rows} mobile={@mobile} dir={@dir} phone={@phone} containers={@spec.containers} off={@off}
           schema={@node && input_schema(@spec, @node, @schemas)} type_open={@type_open}
           typing={@typing} fn_query={@fn_query} fn_category={@fn_category} />
         <%!-- On a phone, over whichever pane shows. --%>
@@ -536,6 +552,13 @@ defmodule IxpipeApp.MainView do
     end
   end
 
+  # Code is a row per line; a pasted block of lines becomes as many rows.
+  def handle_event("config", %{"_target" => "code_line_" <> _} = values, assigns) do
+    rows = for {"code_line_" <> n, text} <- values, do: {String.to_integer(n), text}
+    text = rows |> Enum.sort() |> Enum.map_join("\n", &elem(&1, 1))
+    {:noreply, configure(assigns, "code", text, String.split(text, "\n"))}
+  end
+
   def handle_event("config", %{"_target" => key} = values, assigns) do
     text = values[key] || ""
     {:noreply, configure(%{assigns | typing: key}, key, text, text)}
@@ -626,6 +649,12 @@ defmodule IxpipeApp.MainView do
 
   def handle_event("add_formula", _values, assigns),
     do: {:noreply, %{assigns | formula_rows: formula_rows(assigns) + 1}}
+
+  def handle_event("add_line", _values, assigns) do
+    node = Enum.find(assigns.spec.nodes, &(&1.id == assigns.selected))
+    count = max(length(code_lines(node, assigns.drafts)), assigns.code_rows)
+    {:noreply, %{assigns | code_rows: count + 1}}
+  end
 
   # Drags arrive in screen pixels; at a zoom they move the node by the
   # canvas distance under the pointer.
@@ -1079,6 +1108,7 @@ defmodule IxpipeApp.MainView do
         drafts: %{},
         errors: %{},
         formula_rows: 1,
+        code_rows: 1,
         typing: nil,
         type_open: nil,
         browse: @browse
@@ -1349,6 +1379,7 @@ defmodule IxpipeApp.MainView do
   attr(:profile, :list, default: nil)
   attr(:browse, :map, required: true)
   attr(:skip, :string, default: nil)
+  attr(:failure, :string, default: nil)
   attr(:phone, :boolean, default: false)
 
   # Browse, as in Alteryx: every row a page at a time, sorted by a column
@@ -1384,7 +1415,10 @@ defmodule IxpipeApp.MainView do
       </div>
       <.caption :if={!@node}>Select a tool to see its results.</.caption>
       <.caption :if={@node && !@total && @skip}>{@skip}</.caption>
-      <.caption :if={@node && !@total && !@skip}>Run the workflow to see this tool's results.</.caption>
+      <.caption :if={@node && !@total && !@skip && !@failure}>Run the workflow to see this tool's results.</.caption>
+      <div :if={@failure} class="flex-col flex-1 overflow-scroll" aria-label="Error details">
+        <.body :for={line <- String.split(@failure, "\n")} class="font-mono">{indented(line)}</.body>
+      </div>
       <div :if={@grid} class="flex-col flex-1 overflow-scroll">
         <table class="flex-col" aria-label="Rows">
           <tr class="flex-row py-1">
@@ -1589,6 +1623,8 @@ defmodule IxpipeApp.MainView do
   attr(:drafts, :map, required: true)
   attr(:errors, :map, required: true)
   attr(:formula_rows, :integer, required: true)
+  attr(:code_rows, :integer, default: 1)
+  attr(:mobile, :boolean, default: false)
   attr(:dir, :string, required: true)
   attr(:phone, :boolean, default: false)
   attr(:schema, :list, default: nil)
@@ -1621,9 +1657,10 @@ defmodule IxpipeApp.MainView do
         </.button>
       </div>
       <.caption :if={@node && Tools.fields(@node) == []}>This tool has no settings.</.caption>
+      <.runtime :if={@node && @node.tool == Tools.Script} node={@node} mobile={@mobile} />
       <form :if={@node} phx-change="config" aria-label="Settings" class="flex-col gap-3">
         <.field :for={field <- Tools.fields(@node)} field={field} node={@node} drafts={@drafts}
-          error={@errors[field.key]} errors={@errors} formula_rows={@formula_rows} dir={@dir}
+          error={@errors[field.key]} errors={@errors} formula_rows={@formula_rows} code_rows={@code_rows} dir={@dir}
           size={touch(@phone, :sm)} schema={@schema} type_open={@type_open} typing={@typing} />
       </form>
       <.function_reference :if={@node && expressions?(@node)} query={@fn_query} category={@fn_category}
@@ -1743,6 +1780,7 @@ defmodule IxpipeApp.MainView do
   attr(:drafts, :map, required: true)
   attr(:error, :string, default: nil)
   attr(:formula_rows, :integer, required: true)
+  attr(:code_rows, :integer, default: 1)
   attr(:dir, :string, default: nil)
   attr(:size, :atom, default: :sm)
   attr(:errors, :map, default: %{})
@@ -1911,6 +1949,32 @@ defmodule IxpipeApp.MainView do
     """
   end
 
+  # Code: a numbered row per line, in monospace.
+  defp field(%{field: %{type: :code}} = assigns) do
+    lines = code_lines(assigns.node, assigns.drafts)
+    count = max(length(lines), assigns.code_rows)
+    lines = Enum.with_index(lines ++ List.duplicate("", count - length(lines)), 1)
+    assigns = Map.put(assigns, :lines, lines)
+
+    ~H"""
+    <div class="flex-col gap-1">
+      <.label>{@field.label}</.label>
+      <div class="flex-col rounded-md border border-border bg-muted p-1" aria-label={@field.label}>
+        <div :for={{line, i} <- @lines} class="flex-row items-center gap-2">
+          <.caption class="w-[20px] text-right">{i}</.caption>
+          <input name={"code_line_#{i}"} value={line} aria-label={"#{@field.label} line #{i}"}
+            class="flex-1 font-mono" />
+        </div>
+      </div>
+      <.caption :if={@error} class="text-danger">{@error}</.caption>
+      <.caption :if={!@error && @field[:hint]}>{@field.hint}</.caption>
+      <div class="flex-row">
+        <.button size={@size} phx-click="add_line" aria-label="Add a line">Add a line</.button>
+      </div>
+    </div>
+    """
+  end
+
   defp field(%{field: %{type: :path}} = assigns) do
     ~H"""
     <div class="flex-col gap-1">
@@ -2046,7 +2110,58 @@ defmodule IxpipeApp.MainView do
 
   # Select's new-columns policy defaults by the shape of its list.
   defp chosen(%{key: "new_columns"}, %{tool: Select} = node), do: Select.new_columns(node.config)
-  defp chosen(field, node), do: node.config[field.key] || hd(field.options)
+  defp chosen(field, node), do: node.config[field.key] || field[:default] || hd(field.options)
+
+  attr(:node, :map, required: true)
+  attr(:mobile, :boolean, default: false)
+
+  # Script's runtime: the one it will use, or what's missing and what to do.
+  defp runtime(assigns) do
+    language = assigns.node.config["language"] || "python"
+
+    found =
+      if assigns.mobile,
+        do: {:error, Script.desktop_only()},
+        else: Script.runtime(language, assigns.node.config["interpreter"])
+
+    assigns = Map.merge(assigns, %{found: found, language: Script.label(language)})
+
+    ~H"""
+    <.callout :if={match?({:error, _}, @found)} tone={:warning} title={"#{@language} can't run here."}>
+      {elem(@found, 1)}
+    </.callout>
+    <.caption :if={match?({:ok, _}, @found)}>Runs with {elem(@found, 1)}</.caption>
+    """
+  end
+
+  # Leading spaces as no-break spaces, so a traceback keeps its indentation.
+  defp indented(line),
+    do: String.replace(line, ~r/^ +/, &String.duplicate("\u00A0", byte_size(&1)))
+
+  # A failed tool's error in full (a traceback keeps its lines), for its
+  # Results.
+  defp failure(%{nodes: nodes, messages: messages}, %Spec.Node{id: id}) do
+    if nodes[id] == :failed,
+      do:
+        Enum.find_value(
+          messages,
+          &(&1.node == id and &1.level == :error and (&1.detail || &1.text))
+        )
+  end
+
+  defp failure(_run, _node), do: nil
+
+  defp code_lines(nil, _drafts), do: []
+
+  defp code_lines(node, drafts) do
+    case drafts["code"] do
+      nil -> String.split(node.config["code"] || "", "\n", trim: false) |> drop_empty()
+      rows -> rows
+    end
+  end
+
+  defp drop_empty([""]), do: []
+  defp drop_empty(lines), do: lines
 
   # What a Select row changes, under it.
   defp select_note(row, loaded?) do
@@ -2187,7 +2302,9 @@ defmodule IxpipeApp.MainView do
     "join_multiple" => "combine",
     "fuzzy_match" => "scan-search",
     "macro_input" => "log-in",
-    "macro_output" => "log-out"
+    "macro_output" => "log-out",
+    "python" => "square-code",
+    "script" => "square-terminal"
   }
   defp tool_icon(tool), do: Map.get(@icons, String.replace(tool, ~r/^(in|out)put_/, ""))
 
