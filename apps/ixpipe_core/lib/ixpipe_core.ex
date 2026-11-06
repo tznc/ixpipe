@@ -123,6 +123,9 @@ defmodule IxpipeCore do
     end)
   end
 
+  defp tables(%Table{} = table), do: [table]
+  defp tables(outputs) when is_map(outputs), do: Map.values(outputs)
+
   defp flatten(id, %Table{} = table), do: [{id, table}]
 
   defp flatten(id, outputs) when is_map(outputs),
@@ -179,6 +182,11 @@ defmodule IxpipeCore do
         try do
           result = tool.run(inputs, config, ctx)
           ms = System.monotonic_time(:millisecond) - started
+          # A table's own warnings (Select's failed casts) are the node's.
+          for %Table{warnings: warnings} <- tables(result),
+              text <- warnings,
+              do: Context.warn(ctx, text)
+
           Context.info(ctx, "#{rows(tool, result)} in #{ms} ms")
           result
         rescue
