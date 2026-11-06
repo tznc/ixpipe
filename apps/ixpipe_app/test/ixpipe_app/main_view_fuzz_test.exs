@@ -92,14 +92,20 @@ defmodule IxpipeApp.MainViewFuzzTest do
                "edge to a missing output #{ref} after #{inspect(trail)}"
       end
 
-      # A failed run's details belong to a node that is still there.
-      with {id, _message} <- assigns.failure,
-           do: assert(id in ids, "failure of a removed node #{id} after #{inspect(trail)}")
-
       assert {:ok, ^spec} = spec |> Spec.to_yaml() |> Spec.decode(),
              "YAML does not round-trip after #{inspect(trail)}"
 
       assert String.starts_with?(assigns.path, dir)
+
+      # A run's messages and statuses are for the workflow as it is: any
+      # edit clears them.
+      if run = assigns.run do
+        assert Enum.sort(Map.keys(run.nodes)) == Enum.sort(ids),
+               "run statuses out of step with the workflow after #{inspect(trail)}"
+
+        assert Enum.all?(run.messages, &(&1.node in ids)),
+               "a message for a missing tool after #{inspect(trail)}"
+      end
     end
   end
 end

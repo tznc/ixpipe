@@ -95,7 +95,7 @@ defmodule IxpipeApp.CodeToolsTest do
     Test.click(w, "Run workflow")
 
     text = Test.text(w)
-    assert text =~ "python_1 failed."
+    assert text =~ "Failed at python_1."
     assert text =~ "Python raised ZeroDivisionError on line 2: division by zero."
     assert text =~ "Fix the script and run again."
     refute text =~ "Fix its config"

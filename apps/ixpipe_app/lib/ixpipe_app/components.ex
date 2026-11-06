@@ -150,6 +150,24 @@ defmodule IxpipeApp.Components do
   attr(:tabs, :list, required: true, doc: "`{key, label}` pairs")
   attr(:selected, :string, required: true)
   attr(:event, :string, required: true)
+  attr(:touch, :boolean, default: false, doc: "phone size: 40px tabs")
+
+  @doc """
+  A panel's tabs, as the ribbon's: each labelled "<Label> tab", sending
+  `event` with `phx-value-tab`; the selected one takes the teal tint.
+  """
+  def tabs(assigns),
+    do: ~H"""
+    <div class="flex-row items-center gap-1" role="tablist">
+      <button :for={{key, label} <- @tabs} data-variant="tab" role="tab" aria-selected={to_string(key == @selected)}
+        aria-label={"#{label} tab"} phx-click={@event} phx-value-tab={key}
+        class={"#{tab_size(@touch)} rounded-md cursor-pointer text-sm " <> tab_look(key == @selected)}>{label}</button>
+    </div>
+    """
+
+  attr(:tabs, :list, required: true, doc: "`{key, label}` pairs")
+  attr(:selected, :string, required: true)
+  attr(:event, :string, required: true)
   attr(:label, :string, required: true)
 
   @doc """
@@ -167,6 +185,20 @@ defmodule IxpipeApp.Components do
           class={"flex-1 min-h-10 flex-row items-center justify-center rounded-md cursor-pointer text-sm " <> tab_look(key == @selected)}>{label}</button>
       </div>
     </div>
+    """
+
+  attr(:rest, :global, include: ~w(title))
+  slot(:inner_block, required: true)
+
+  @doc """
+  A row of a list that acts when chosen, such as a message that selects
+  its tool: full width, its content wrapping, a muted hover. Give it
+  `phx-click` and an `aria-label`. For a command, use `button/1`.
+  """
+  def list_item(assigns),
+    do: ~H"""
+    <div role="button" class="flex-row items-start gap-2 w-full min-w-0 px-2 py-1 rounded-md cursor-pointer hover:bg-muted"
+      {@rest}>{render_slot(@inner_block)}</div>
     """
 
   ## Status

@@ -107,7 +107,8 @@ defmodule IxpipeApp.MainViewTest do
 
     w = start(ctx, path: Path.join(ctx.dir, "bad.yaml"))
     Test.click(w, "Run workflow")
-    assert Test.text(w) =~ "orders failed"
+    assert Test.text(w) =~ "Failed at orders."
+    assert Test.text(w) =~ "The file /nope.csv doesn't exist. Choose a file that does."
   end
 
   test "a file that does not load says why", ctx do

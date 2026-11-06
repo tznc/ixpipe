@@ -17,12 +17,17 @@ defmodule IxpipeApp.QA do
   Seeds a workflows home, starts the app on it and connects. `open:` names a
   seeded workflow to open on the canvas (default: the home screen); `env:`
   adds environment variables, such as baguette's `BAGUETTE_PICK_FILE`
-  answer for native file dialogs.
+  answer for native file dialogs; `workflows:` adds `{file, yaml}` pairs to
+  the home.
   Returns `%{app, page, home}`; stop it with `stop/1`.
   """
   def launch!(opts \\ []) do
     home = Path.join(System.tmp_dir!(), "ixpipe-qa-#{System.unique_integer([:positive])}")
     seed!(home)
+
+    for {file, yaml} <- Keyword.get(opts, :workflows, []),
+        do: File.write!(Path.join(home, file), yaml)
+
     System.put_env("IXPIPE_HOME", home)
 
     case opts[:open] do
@@ -66,6 +71,9 @@ defmodule IxpipeApp.QA do
 
     png
   end
+
+  @doc "The QA fixtures directory (orders.csv, customers.csv)."
+  def fixtures, do: @fixtures
 
   def out_dir, do: System.get_env("QA_OUT", Path.expand("../qa/.shots", __DIR__))
 

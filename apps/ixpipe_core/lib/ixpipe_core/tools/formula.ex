@@ -37,6 +37,28 @@ defmodule IxpipeCore.Tools.Formula do
       end)
 
     # The input is also the table `df`, for subqueries.
-    Context.sql(ctx, "WITH df AS (SELECT * FROM #{Table.ref(t)}) #{select}")
+    out = Context.sql(ctx, "WITH df AS (SELECT * FROM #{Table.ref(t)}) #{select}")
+    warn_all_null(ctx, out, formulas |> Enum.map(& &1["as"]) |> Enum.uniq())
+    out
+  end
+
+  # A formula NULL on every row usually reads a NULL column or mixes types.
+  defp warn_all_null(_ctx, _out, []), do: :ok
+
+  defp warn_all_null(ctx, out, names) do
+    counts = Enum.map_join(names, ", ", &"count(#{ident(&1)})")
+
+    %{rows: [[total | counts]]} =
+      Table.query!(out.db, "SELECT count(*), #{counts} FROM #{Table.ref(out)}")
+
+    for {name, 0} <- Enum.zip(names, counts), total > 0 do
+      Context.warn(
+        ctx,
+        ~s(Formula "#{name}" is NULL on every row. ) <>
+          "Check the columns it uses have values, or give missing ones a default with COALESCE."
+      )
+    end
+
+    :ok
   end
 end

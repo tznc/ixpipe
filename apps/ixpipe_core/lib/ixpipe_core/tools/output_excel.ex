@@ -6,7 +6,7 @@ defmodule IxpipeCore.Tools.OutputExcel do
   """
   @behaviour IxpipeCore.Tool
 
-  alias IxpipeCore.Table
+  alias IxpipeCore.{Context, Table}
 
   @impl true
   def inputs, do: ["in"]
@@ -26,13 +26,14 @@ defmodule IxpipeCore.Tools.OutputExcel do
     ]
 
   @impl true
-  def run(%{"in" => t}, %{"path" => path} = config, _ctx) do
+  def run(%{"in" => t}, %{"path" => path} = config, ctx) do
     {names, rows} = Table.values(t)
     header = Enum.map(names, &[&1, bold: true])
     rows = Enum.map(rows, &Enum.map(&1, fn v -> cell(v) end))
 
     sheet = %Elixlsx.Sheet{name: config["sheet"] || "Sheet1", rows: [header | rows]}
     {:ok, _} = Elixlsx.write_to(%Elixlsx.Workbook{sheets: [sheet]}, String.to_charlist(path))
+    Context.info(ctx, "Wrote #{IxpipeCore.plural(length(rows), "row")} to #{path}.")
     t
   end
 
