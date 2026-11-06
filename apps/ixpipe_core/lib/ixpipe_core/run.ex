@@ -2,7 +2,10 @@ defmodule IxpipeCore.Run do
   @moduledoc """
   What `IxpipeCore.execute/2` returns. `status` is `:ok` when every node
   ran, `:failed` when one failed. `nodes` holds each node's status: `:ok`,
-  `:failed`, or `:skipped` when a node upstream of it failed. `tables` holds
+  `:failed`, or `:skipped` when a node upstream of it failed or it is
+  disabled. `disabled` lists the nodes skipped for being disabled, in a
+  disabled container, or after one (`Spec.skipped/1`), as against those
+  skipped because a node upstream failed; each says why in an info message. `tables` holds
   the tables of every node that ran (keyed as `IxpipeCore.run/2` keys them),
   so a partial run's results stay readable. `messages` are in workflow
   order, each node's most serious first. `ms` is the run's wall time.
@@ -10,13 +13,14 @@ defmodule IxpipeCore.Run do
 
   alias IxpipeCore.{Message, Table}
 
-  defstruct status: :ok, nodes: %{}, tables: %{}, messages: [], ms: 0
+  defstruct status: :ok, nodes: %{}, tables: %{}, disabled: [], messages: [], ms: 0
 
   @type node_status :: :ok | :failed | :skipped
   @type t :: %__MODULE__{
           status: :ok | :failed,
           nodes: %{String.t() => node_status()},
           tables: %{String.t() => Table.t()},
+          disabled: [String.t()],
           messages: [Message.t()],
           ms: non_neg_integer()
         }
