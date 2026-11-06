@@ -34,7 +34,9 @@ defmodule IxpipeCore.Tools do
     "find_replace" => IxpipeCore.Tools.FindReplace,
     "append_fields" => IxpipeCore.Tools.AppendFields,
     "join_multiple" => IxpipeCore.Tools.JoinMultiple,
-    "fuzzy_match" => IxpipeCore.Tools.FuzzyMatch
+    "fuzzy_match" => IxpipeCore.Tools.FuzzyMatch,
+    "python" => IxpipeCore.Tools.Python,
+    "script" => IxpipeCore.Tools.Script
   }
 
   @spec lookup(term()) :: module() | nil

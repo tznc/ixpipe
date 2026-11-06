@@ -10,6 +10,14 @@ defmodule IxpipeCore.ErrorsTest do
     message
   end
 
+  test "a tool's own what-happened-what-to-do message stays as it is, without its detail" do
+    raw =
+      "Python raised ZeroDivisionError on line 2: division by zero. Fix the script and run again.\n\nTraceback (most recent call last):"
+
+    assert IxpipeCore.Errors.humanize(raw) ==
+             "Python raised ZeroDivisionError on line 2: division by zero. Fix the script and run again."
+  end
+
   test "a missing column names it and the columns there are" do
     raw = duck_error("SELECT nope FROM (SELECT 1 AS a, 2 AS b)")
     text = Errors.humanize(raw)

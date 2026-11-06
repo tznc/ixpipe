@@ -14,6 +14,10 @@ defmodule IxpipeCore.Errors do
     first = raw |> String.split("\n", trim: true) |> List.first("") |> String.trim()
 
     cond do
+      # Already "what happened. what to do.": a code tool's own message.
+      String.ends_with?(first, "run again.") ->
+        first
+
       m = Regex.run(~r/Referenced column "([^"]+)" not found/, raw) ->
         candidates =
           case Regex.run(~r/Candidate bindings: (.+)/, raw) do

@@ -32,7 +32,13 @@ defmodule IxpipeCore.MixProject do
       {:xlsx_reader, "~> 0.8.12"},
       {:elixlsx, "~> 0.6.0"},
       {:rustler, "~> 0.38"},
-      {:postgrex, "~> 0.22"}
+      {:postgrex, "~> 0.22"},
+      # Script tool: code in a locally installed runtime, through portals.
+      {:portals, "~> 0.1.0"},
+      {:portals_python, "~> 0.1.0"},
+      {:portals_javascript, "~> 0.1.0"},
+      {:portals_ruby, "~> 0.1.0"},
+      {:portals_php, "~> 0.1.0"}
     ]
   end
 end
