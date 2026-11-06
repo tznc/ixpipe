@@ -5,7 +5,9 @@ defmodule IxpipeCore.Tools.Imputation do
   instead. `method` fills with the `mean`, `median` or `mode` of the
   column's other (present, non-null) values, or a `constant` (`value`).
   Filled columns are DOUBLE. With `indicator`, each column gets a
-  `<column>_imputed` BOOLEAN column, true where a value was filled.
+  `<column>_imputed` BOOLEAN column, true where a value was filled. It
+  reports how many values it filled in each column, and warns when a
+  column has no values to fill from.
   """
   @behaviour IxpipeCore.Tool
 
@@ -74,6 +76,8 @@ defmodule IxpipeCore.Tools.Imputation do
         "#{fill(method, c, missing.(c), config)} AS __fill#{i}"
       end)
 
+    report(ctx, t, columns, method, fills, missing)
+
     replaced =
       columns
       |> Enum.with_index()
@@ -97,6 +101,41 @@ defmodule IxpipeCore.Tools.Imputation do
     FROM #{Table.ref(t)} t CROSS JOIN s ORDER BY t.rowid
     """)
   end
+
+  # Says how many values each column has missing, and what fills them: one
+  # scan of the input, as the fills are.
+  defp report(ctx, t, columns, method, fills, missing) do
+    counts =
+      Enum.map_join(columns, ", ", &"count(*) FILTER (WHERE #{missing.(ident(&1))})")
+
+    %{rows: [row]} = Table.query!(t.db, "SELECT #{fills}, #{counts} FROM #{Table.ref(t)}")
+    {values, counts} = Enum.split(row, length(columns))
+
+    for {c, value, n} <- Enum.zip([columns, values, counts]) do
+      cond do
+        n == 0 ->
+          Context.info(ctx, ~s(No values to fill in "#{c}".))
+
+        is_nil(value) ->
+          Context.warn(
+            ctx,
+            ~s(Column "#{c}" has no values to take the #{method} of, so its ) <>
+              "#{IxpipeCore.plural(n, "missing value")} #{if n == 1, do: "stays", else: "stay"} empty. " <>
+              "Fill it with a constant, or check the column."
+          )
+
+        true ->
+          Context.info(
+            ctx,
+            ~s(Filled #{IxpipeCore.plural(n, "value")} in "#{c}" with the #{method}, #{format(value)}.)
+          )
+      end
+    end
+  end
+
+  defp format(value) when is_float(value), do: Float.to_string(value)
+  defp format(value) when is_integer(value) or is_binary(value), do: to_string(value)
+  defp format(value), do: inspect(value)
 
   defp fill("mean", c, missing, _), do: "avg(#{c}) FILTER (WHERE NOT (#{missing}))"
   defp fill("median", c, missing, _), do: "median(#{c}) FILTER (WHERE NOT (#{missing}))"

@@ -54,6 +54,25 @@ defmodule IxpipeCore.RunMessagesTest do
     assert skipped =~ "Didn't run because bad failed."
   end
 
+  test "a table's warnings are the node's warnings (Select's failed casts)" do
+    run =
+      execute("""
+      nodes:
+        - {id: orders, tool: input_csv, config: {path: #{@fixtures}/orders.csv}}
+        - {id: text, tool: formula, inputs: {in: orders},
+           config: {formulas: [{as: label, expr: "CASE WHEN amount > 20 THEN 'big' ELSE amount::VARCHAR END"}]}}
+        - {id: typed, tool: select, inputs: {in: text},
+           config: {columns: [{name: label, type: BIGINT}, gone]}}
+      """)
+
+    assert run.status == :ok
+
+    assert texts(run, "typed", :warning) == [
+             "gone is not in the input, so it was skipped.",
+             "label: 2 values couldn't become BIGINT and are now NULL."
+           ]
+  end
+
   test "run/2 still returns tables, or the first failure" do
     {:ok, spec} =
       IxpipeCore.Spec.parse("""

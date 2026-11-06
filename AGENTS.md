@@ -9,12 +9,15 @@ desktop and mobile app in Elixir, rendered by GPUI through
 - `apps/ixpipe_core`: the engine, pure Elixir with no UI dependency.
   - `IxpipeCore.Spec` parses YAML workflows: `decode/1` (drafts), `validate/1` (runnable DAG), `to_yaml/1`.
   - `IxpipeCore.Edit` applies canvas edits (add, move, connect, remove) to drafts.
+  - Organisation (optional YAML keys, so older workflows load unchanged): `containers` (titled boxes holding tools; collapse, disable), `comments`, and per-tool `annotation` and `disabled`. A run skips disabled tools and everything downstream (`Spec.skipped/1`): they are `:skipped` in the `Run`, listed in `Run.disabled` (apart from tools skipped below a failure), with no results and an info message saying why ("Skipped: disabled.", "Skipped: in disabled container X.", "Skipped: after X, which is disabled.").
   - `IxpipeCore.run/2` compiles a spec to a [Runic](https://hex.pm/packages/runic) workflow and runs it in a fresh in-memory DuckDB v2 database (`IxpipeCore.Duck`): Runic orchestrates the DAG, and each node's output is a table there (`IxpipeCore.Table`, named for the node: `id`, or `id.output`). Runic steps run concurrently, each on its own connection; past `memory_limit` DuckDB spills to disk.
-  - `IxpipeCore.execute/2` runs as Alteryx does and returns an `IxpipeCore.Run`: each node's status (ok, failed, skipped below a failure), the tables of every node that ran, and per-node `IxpipeCore.Message`s (info: rows and time; warnings; errors in "what happened. what to do." form via `IxpipeCore.Errors.humanize/1`, the raw DuckDB text as `detail`). `run/2` wraps it as `{:ok, tables}` or the first `{:node_failed, …}`. Tools record warnings with `Context.warn/2` and info with `Context.info/2` (safe across Runic's concurrent steps).
+  - `IxpipeCore.execute/2` runs as Alteryx does and returns an `IxpipeCore.Run`: each node's status (ok, failed, skipped below a failure), the tables of every node that ran, and per-node `IxpipeCore.Message`s (info: rows and time; warnings; errors in "what happened. what to do." form via `IxpipeCore.Errors.humanize/1`, the raw DuckDB text as `detail`). `run/2` wraps it as `{:ok, tables}` or the first `{:node_failed, …}`. Tools record warnings with `Context.warn/2` (or a returned table's `warnings`, as Select's failed casts) and info with `Context.info/2` (safe across Runic's concurrent steps).
+  - Macros (`IxpipeCore.Macro`): a workflow with Macro input/output tools and an optional `macro:` header (type, parameters) is used as a node `tool: macro` with `path` and parameter values; `{{name}}` in inner settings is a parameter (a SQL literal in SQL settings). Batch and iterative types too. A macro node's ports and fields come from its declaration: use `IxpipeCore.Tools.inputs/1`, `outputs/1` and `fields/1` on nodes, not `node.tool.inputs()`. The inner workflow runs through `execute/2` (`:db`, `:prefix`) in the same database; an inner failure is the macro node's error (`m/f failed: …`) and inner warnings are its warnings, prefixed with the inner tool.
   - Code tools: `python` runs a script in `IxpipeCore.Python`, RustPython embedded as a NIF (`native/ixpipe_python`) and sandboxed: built without `host_env` (no os, files, sockets, ctypes), an import allow-list, and a watchdog for CPU time, memory and cancel. Desktop and Android. `script` runs code in a locally installed Python, Node, Ruby or PHP through [portals](https://hex.pm/packages/portals) (`IxpipeCore.Script`, runners in `priv/script/<language>`), unsandboxed and desktop only; rows go through JSON lines or Parquet files. Both have outputs `out` and `log` (stdout, stderr, warnings) and keep their code in the node's `code` config (`:code` field, a row per line in the panel).
-  - Tools (`IxpipeCore.Tools.*`) implement `IxpipeCore.Tool` over tables: `inputs/0`, `fields/0` (the settings schema the properties panel renders; `IxpipeCore.Config` parses and formats each type) and `run/3` (`inputs, config, %IxpipeCore.Context{}`), mostly SQL through `Context.sql/3`. Expressions in Filter and Formula are DuckDB SQL. Register new ones in `IxpipeCore.Tools` and in a ribbon group (`@ribbon`) in `MainView`; a test checks every tool is on exactly one tab.
-- `apps/ixpipe_app`: the Baguette UI. `IxpipeApp.MainView` is the main window: home (workflows in `IXPIPE_HOME`, default `~/ixpipe`) and the canvas (ribbon, scrolling canvas with curved wires, properties panel driven by each tool's `fields/0`, results grid of the selected tool's first 50 rows after a run). `IxpipeApp.Theme` holds the colour tokens; every colour class must resolve to one (tested).
-  - Rust is only for NIFs: platform glue, `IxpipeCore.Python` (`native/ixpipe_python`, RustPython; build.rs freezes only the stdlib modules the sandbox allows, and the crate builds for size), `IxpipeCore.Duck` (`apps/ixpipe_core/native/ixpipe_duckdb`, duckdb-rs `~1.20000` = DuckDB v2.0.0) and `IxpipeCore.Sqlite` (`native/ixpipe_sqlite`, rusqlite bundled). Never compile DuckDB: the NIF links a prebuilt `libduckdb` that ships beside it in `priv/native` (rpath `$ORIGIN`). Desktop builds download DuckDB's official library (libduckdb-sys's `download-lib`); Android links the one CI publishes as a release asset.
+  - Tools (`IxpipeCore.Tools.*`) implement `IxpipeCore.Tool` over tables: `inputs/0`, `fields/0` (the settings schema the properties panel renders; `IxpipeCore.Config` parses and formats each type) and `run/3` (`inputs, config, %IxpipeCore.Context{}`), mostly SQL through `Context.sql/3`. Expressions in Filter, Formula, Multi-Row Formula (`[Row-1:col]` compiles to `lag`/`lead` over a window `w` in row order) and Multi-Field Formula (`_current_` is each column) are DuckDB SQL; `IxpipeCore.Functions` is the function reference the properties panel searches and inserts from. DateTime maps Alteryx date formats (`dd/MM/yyyy`) to `strptime`/`strftime`. Register new ones in `IxpipeCore.Tools` and in a ribbon group (`@ribbon`) in `MainView`; a test checks every tool is on exactly one tab.
+  - Connectors: database servers through pure-Elixir drivers (`IxpipeCore.Server`: Postgres via postgrex, MySQL/MariaDB via myxql, SQL Server via tds; input and output tools each), SQLite through our NIF, and files through DuckDB (`IxpipeCore.Files`: CSV, Parquet and JSON, one file, a folder or a wildcard, unioned by name; Excel through xlsx_reader/elixlsx). File paths may be `s3://`, `gs://` or `az://` (`IxpipeCore.Cloud`): DuckDB's httpfs and azure extensions, downloaded on first use (not in libduckdb, so not on Android); Input BigQuery likewise uses the community `bigquery` extension.
+- `apps/ixpipe_app`: the Baguette UI. `IxpipeApp.MainView` is the main window: home (workflows in `IXPIPE_HOME`, default `~/ixpipe`) and the canvas (ribbon, scrolling canvas with curved wires, properties panel driven by each tool's `fields/0`, and Results: after a run, a browser of the selected tool's whole output, paged, sortable and profiled (`IxpipeCore.Profile`), read from the run's tables, which the view keeps alive until the next edit). `IxpipeApp.Theme` holds the colour tokens; every colour class must resolve to one (tested).
+  - Rust is only for NIFs: platform glue, `IxpipeCore.Python` (`native/ixpipe_python`, RustPython; build.rs freezes only the stdlib modules the sandbox allows, and the crate builds for size), `IxpipeCore.Duck` (`apps/ixpipe_core/native/ixpipe_duckdb`, duckdb-rs `~1.20000` = DuckDB v2.0.0) and `IxpipeCore.Sqlite` (`native/ixpipe_sqlite`, rusqlite bundled). Never compile DuckDB: the NIF links a prebuilt `libduckdb` that ships beside it in `priv/native` (rpath `$ORIGIN`). Desktop builds download DuckDB's official library (libduckdb-sys's `download-lib`); Android links ours: `libduckdb-android.yml` builds it once per DuckDB version with the NDK and publishes it as the release `libduckdb-v2.0.0`; `mix.exs` downloads it (`scripts/android-libduckdb.sh`, checked against `scripts/libduckdb-android.sha256`) and the APK ships it as `lib/<abi>/libduckdb.so` beside the NIF. A new DuckDB version: bump the workflow, run it, update the checksums.
 
 ## Rules
 
@@ -27,7 +30,7 @@ desktop and mobile app in Elixir, rendered by GPUI through
 - Never create atoms from workflow input. Ports, ids and config keys stay strings.
 - Runic hashes steps by their fn plus bound variables, so build step fns inline (see `IxpipeCore.step/2`). A fn passed in as a variable gets the same hash for every node.
 - When recommending actions, give options A/B/C plus a recommendation. Ask when something is ambiguous.
-- No PRs unless asked. PR descriptions are 1-2 lines plus the session link.
+- Never push to `main`: every change lands through a PR from a `claude/` branch. PR descriptions are 1-2 lines plus the session link.
 
 ## Design language
 
@@ -59,8 +62,10 @@ one-off style is a bug. `design_rules_test.exs` enforces what can be checked.
   title, one sentence, at most one action (tested on home and canvas).
 - **Ribbon** (`<.ribbon>`, `<.ribbon_group>`), as in ixtable after Access:
   a row of tabs over labelled command groups, under the canvas header.
-  Home holds Edit (Undo, Redo) and View (zoom); In/Out, Preparation, Join,
-  Parse, Transform and Code hold the tools. Commands are `:quiet` small buttons with
+  Home holds Edit (Undo, Redo), Organise (Container, Comment) and View
+  (zoom); In/Out, Preparation, Join, Parse, Transform, Code and Macros hold
+  the tools (Macros also has "Use a macro…", a file picker). Commands are
+  `:quiet` small buttons with
   a lucide icon (`<.button icon="undo-2">`, ixtable's: Undo2, Redo2, ZoomIn,
   ZoomOut; each tool its own, an input and output sharing their format's)
   and a short noun ("CSV" in the Input group); zoom is icon-only with an
@@ -114,5 +119,48 @@ runuser -u postgres -- psql -c "CREATE ROLE ixpipe LOGIN PASSWORD 'ixpipe-test'"
 runuser -u postgres -- psql -c "CREATE DATABASE ixpipe_test OWNER ixpipe"
 PGPASSWORD=ixpipe-test mix test --only postgres
 ```
+
+MySQL (`:mysql`) and SQL Server (`:mssql`) tests work the same way, with
+`IXPIPE_MYSQL_*` / `MYSQL_PWD` and `IXPIPE_MSSQL_*` / `SQLCMDPASSWORD`
+(user `sa`; the tests create `ixpipe_test`). SQL Server 2022's jammy package
+installs on Ubuntu 24.04 with jammy's libldap-2.5-0 beside it.
+
+```sh
+apt-get install -y mysql-server && service mysql start
+mysql -uroot -e "CREATE USER 'ixpipe'@'localhost' IDENTIFIED BY 'ixpipe-test';
+  CREATE DATABASE ixpipe_test; GRANT ALL ON ixpipe_test.* TO 'ixpipe'@'localhost'"
+MYSQL_PWD=ixpipe-test mix test --only mysql
+
+# SQL Server: add https://packages.microsoft.com/ubuntu/22.04/mssql-server-2022, then
+apt-get install -y mssql-server
+runuser -u mssql -- env ACCEPT_EULA=Y MSSQL_PID=Developer \
+  MSSQL_SA_PASSWORD='Ixpipe-test1' /opt/mssql/bin/sqlservr &
+SQLCMDPASSWORD='Ixpipe-test1' mix test --only mssql
+
+# S3 (`:s3`): any S3-compatible server; moto's needs no setup.
+pip install 'moto[server]' && moto_server -p 5000 &
+mix test --only s3   # IXPIPE_S3_ENDPOINT, default localhost:5000
+```
+
+## Connections
+
+Saved in `connections.yaml` in the workflows home (`IxpipeCore.Connections`),
+named by a tool's `connection` setting; the properties panel lists those of
+the kinds the field takes (`kinds:` in `fields/0`). Secrets are never written
+down: a setting ending in `_env` names the environment variable holding one.
+
+| Type | Settings | Used by |
+| --- | --- | --- |
+| `postgres`, `mysql`, `sqlserver` | `host`, `port`, `database`, `username`, `password_env` (`sqlserver`: `ssl`) | Input/Output Postgres, MySQL, SQL Server |
+| `sqlite` | `path` | Input/Output SQLite |
+| `s3` | `key_id`, `secret_env`, `region`, `endpoint`, `session_token_env`, `url_style`, `use_ssl` | CSV, Parquet, JSON tools on `s3://` paths |
+| `gcs` | `key_id`, `secret_env` (an HMAC key) | the same on `gs://` |
+| `azure` | `connection_string_env` | the same on `az://` and `abfss://` |
+| `bigquery` | `project`, `service_account_path` or `access_token_env` (else gcloud's application default credentials) | Input BigQuery (DuckDB's community `bigquery` extension; `:bigquery` test needs `IXPIPE_BQ_PROJECT`) |
+
+A cloud connection becomes a DuckDB secret scoped to the path's bucket, for
+that run only. Outputs replace a table (default) or append, creating it if
+missing; DuckDB types map to the server's (`IxpipeCore.Server.column_type/2`).
+Postgres loads with `COPY`, MySQL and SQL Server with batched `INSERT`s.
 
 `IXPIPE_WORKFLOW` opens a workflow straight onto the canvas.

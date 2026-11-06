@@ -14,10 +14,6 @@ defmodule IxpipeCore.Errors do
     first = raw |> String.split("\n", trim: true) |> List.first("") |> String.trim()
 
     cond do
-      # Already "what happened. what to do.": a code tool's own message.
-      String.ends_with?(first, "run again.") ->
-        first
-
       m = Regex.run(~r/Referenced column "([^"]+)" not found/, raw) ->
         candidates =
           case Regex.run(~r/Candidate bindings: (.+)/, raw) do
@@ -67,9 +63,24 @@ defmodule IxpipeCore.Errors do
         "Values of type #{Enum.at(m, 1)} and #{Enum.at(m, 2)} can't be compared. " <>
           "Use a Formula to cast one side so both have the same type."
 
-      m = Regex.run(~r/No function matches the given name and argument types '([^']+)'/, raw) ->
-        "#{Enum.at(m, 1)} doesn't take values of these types. " <>
-          "Use a Formula to cast the columns to the types it takes."
+      m =
+          Regex.run(
+            ~r/No function matches the given name and argument types '([^'(]+)\(([^)]*)\)'/,
+            raw
+          ) ->
+        types = m |> Enum.at(2) |> String.replace("_LITERAL", "")
+
+        "#{Enum.at(m, 1)} can't take values of types #{types}. " <>
+          "Choose columns of a type it takes, or cast them, e.g. CAST(column AS DOUBLE)."
+
+      # A tool's own message: one line, "what happened. what to do."
+      own?(raw) ->
+        raw
+
+      # Already "what happened. what to do." (a tool's own message, such as
+      # a connection or extension error): kept as it is.
+      strip_kind(first) == first and first =~ ~r/[.!?)] +[A-Z]/ ->
+        sentence(first)
 
       true ->
         sentence(strip_kind(first)) <> " " <> @generic
@@ -79,10 +90,16 @@ defmodule IxpipeCore.Errors do
   # DuckDB lists candidates as "a", "b" or "t.a", "t.b".
   defp clean_candidates(names) do
     Regex.scan(~r/"(?:[^".]+\.)?([^"]+)"/, names)
+    |> Enum.reject(fn [_, name] -> String.starts_with?(name, "__ixpipe") end)
     |> Enum.map(fn [_, name] -> ~s("#{name}") end)
     |> Enum.uniq()
     |> Enum.join(", ")
   end
+
+  defp own?(raw),
+    do:
+      not String.contains?(raw, "\n") and not Regex.match?(~r/^[A-Z][A-Za-z ]* Error: /, raw) and
+        Regex.match?(~r/[.?!] \S.*\.$/, raw)
 
   @types %{"INT8" => "BIGINT", "INT16" => "SMALLINT", "INT32" => "INTEGER", "INT64" => "BIGINT"}
   defp type(name), do: Map.get(@types, name, name)

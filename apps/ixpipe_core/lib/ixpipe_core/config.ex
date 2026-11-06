@@ -14,6 +14,7 @@ defmodule IxpipeCore.Config do
   | `:integer` | `10` | an integer |
   | `:formulas` | one per line, `name = expression` | `[%{"as", "expr"}]` |
   | `:aggregates` | `sum(amount) as total, count(id) as orders` | `[%{"op", "column", "as"}]` |
+  | `:select` | not text: its own editor (`IxpipeCore.Tools.Select.edit/4`) | Select's columns |
 
   Empty text is `{:ok, nil}` (remove the setting) for an optional field and
   `{:error, "Required"}` otherwise.
@@ -30,6 +31,7 @@ defmodule IxpipeCore.Config do
           | :integer
           | :formulas
           | :aggregates
+          | :select
 
   @spec format(IxpipeCore.Tool.field(), term()) :: String.t()
   def format(_field, nil), do: ""
@@ -47,6 +49,21 @@ defmodule IxpipeCore.Config do
       end)
 
   def format(_field, value), do: to_string(value)
+
+  @doc """
+  A one-line summary of a node's settings, for its annotation, as Alteryx
+  shows under a tool: "Sort by: amount · Descending: true".
+  """
+  @spec summary(IxpipeCore.Spec.Node.t()) :: String.t()
+  def summary(%{tool: tool, config: config}) do
+    parts =
+      for field <- tool.fields(),
+          value = config[field.key],
+          value not in [nil, "", []],
+          do: "#{field.label}: #{format(field, value) |> String.replace("\n", ", ")}"
+
+    Enum.join(parts, " · ")
+  end
 
   @spec parse(IxpipeCore.Tool.field(), String.t()) :: {:ok, term()} | {:error, String.t()}
   def parse(field, text) do

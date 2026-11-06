@@ -67,4 +67,59 @@ defmodule IxpipeCore.OptionalPortsTest do
     assert Table.to_columns(results["three"]) == %{"k" => [1, 2]}
     assert Table.to_columns(results["four"]) == %{"k" => [1]}
   end
+
+  describe "execute/2" do
+    defp execute(yaml) do
+      {:ok, spec} = Spec.parse(yaml)
+      IxpipeCore.execute(spec)
+    end
+
+    test "an unconnected optional port isn't a failure" do
+      run =
+        execute("""
+        nodes:
+          #{source("a", 2)}
+          #{source("b", 2)}
+          - {id: j, tool: join_multiple, inputs: {in1: a, in2: b}, config: {on: [k]}}
+          - {id: f, tool: fuzzy_match, inputs: {in: a}, config: {field: k, threshold: 0}}
+        """)
+
+      assert run.status == :ok
+      assert run.nodes == %{"a" => :ok, "b" => :ok, "j" => :ok, "f" => :ok}
+      assert Table.to_columns(run.tables["j"]) == %{"k" => [1, 2]}
+      assert IxpipeCore.Run.messages(run, :error) == []
+      assert [info] = for(%{node: "j", level: :info, text: t} <- run.messages, do: t)
+      assert info =~ ~r/^2 rows in \d+ ms$/
+    end
+
+    test "a failure on an optional port skips the node, and the rest run" do
+      run =
+        execute("""
+        nodes:
+          #{source("a", 4)}
+          #{source("b", 3)}
+          #{source("c", 2)}
+          - {id: bad, tool: filter, inputs: {in: c}, config: {expr: "nope > 1"}}
+          - id: four
+            tool: join_multiple
+            inputs: {in1: a, in2: b, in3: c, in4: bad.true}
+            config: {on: [k], how: inner}
+          - {id: three, tool: join_multiple, inputs: {in1: a, in2: b, in3: c}, config: {on: [k], how: inner}}
+        """)
+
+      assert run.status == :failed
+
+      assert run.nodes == %{
+               "a" => :ok,
+               "b" => :ok,
+               "c" => :ok,
+               "bad" => :failed,
+               "four" => :skipped,
+               "three" => :ok
+             }
+
+      assert Table.to_columns(run.tables["three"]) == %{"k" => [1, 2]}
+      assert IxpipeCore.Run.failed(run) == ["bad"]
+    end
+  end
 end

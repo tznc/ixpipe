@@ -36,6 +36,18 @@ defmodule IxpipeCore.ToolMessagesTest do
       assert warning =~ "Data cleansing"
     end
 
+    test "across several files, the warning names the file with the bad rows",
+         %{dir: dir, ctx: ctx} do
+      File.write!(Path.join(dir, "a.csv"), "id,amount\n1,10\n2,20\n")
+      File.write!(Path.join(dir, "b.csv"), "id,amount\n3,30\n4,40,extra,more\n5,50\n")
+
+      t = Tools.InputCsv.run(%{}, %{"path" => Path.join(dir, "*.csv")}, ctx)
+
+      assert Enum.sort(Table.to_columns(t)["id"]) == [1, 2, 3, 5]
+      assert [warning] = warnings(ctx)
+      assert warning =~ "1 row couldn't be read and was skipped (b.csv line 3"
+    end
+
     test "a clean file has no warnings", %{dir: dir, ctx: ctx} do
       path = Path.join(dir, "ok.csv")
       File.write!(path, "id,name\n1,Ada\n2,Bob\n")
@@ -88,6 +100,24 @@ defmodule IxpipeCore.ToolMessagesTest do
     assert warning =~ "2 cells couldn't be read and are empty (#DIV/0! in B2)"
   end
 
+  test "Input Excel names unreadable cells by their place in the sheet, within the range",
+       %{dir: dir, ctx: ctx} do
+    path = Path.join(dir, "range.xlsx")
+
+    sheet = %Elixlsx.Sheet{
+      name: "S",
+      rows: [["#REF!"], [], [nil, "a", "b"], [nil, 1, "#DIV/0!"], [nil, 2, 3]]
+    }
+
+    {:ok, _} = Elixlsx.write_to(%Elixlsx.Workbook{sheets: [sheet]}, String.to_charlist(path))
+
+    t = Tools.InputExcel.run(%{}, %{"path" => path, "range" => "B3:C"}, ctx)
+
+    assert Table.to_columns(t) == %{"a" => [1, 2], "b" => [nil, 3]}
+    assert [warning] = warnings(ctx)
+    assert warning =~ "1 cell couldn't be read and is empty (#DIV/0! in C4)"
+  end
+
   test "Input Excel explains a file it can't open", %{dir: dir, ctx: ctx} do
     path = Path.join(dir, "missing.xlsx")
 
@@ -102,11 +132,213 @@ defmodule IxpipeCore.ToolMessagesTest do
     for {tool, file} <- [
           {Tools.OutputCsv, "o.csv"},
           {Tools.OutputParquet, "o.parquet"},
+          {Tools.OutputJson, "o.json"},
           {Tools.OutputExcel, "o.xlsx"}
         ] do
       path = Path.join(dir, file)
       tool.run(%{"in" => src}, %{"path" => path}, ctx)
       assert "Wrote 3 rows to #{path}." in infos(ctx)
+    end
+  end
+
+  describe "everyday tools" do
+    test "Append Fields over its limit, set to warn, appends and warns", %{ctx: ctx} do
+      target = Table.new(ctx.db, "t", id: [1])
+      source = Table.new(ctx.db, "s", k: [1, 2, 3])
+
+      t =
+        Tools.AppendFields.run(
+          %{"target" => target, "source" => source},
+          %{"limit" => 2, "too_many" => "warn"},
+          ctx
+        )
+
+      assert Table.count(t) == 3
+      assert [warning] = warnings(ctx)
+      assert warning =~ "The source has 3 rows, over the limit of 2."
+      assert warning =~ "Raise the limit"
+    end
+
+    test "Append Fields within its limit has no warnings", %{ctx: ctx} do
+      target = Table.new(ctx.db, "t", id: [1])
+      source = Table.new(ctx.db, "s", k: [1, 2])
+
+      Tools.AppendFields.run(
+        %{"target" => target, "source" => source},
+        %{"too_many" => "warn"},
+        ctx
+      )
+
+      assert warnings(ctx) == []
+    end
+
+    test "Imputation says how many values it filled in each column", %{ctx: ctx} do
+      src = Table.new(ctx.db, "src", a: [1, nil, 3, nil], b: [nil, 2, 4, 6], c: [1, 2, 3, 4])
+
+      Tools.Imputation.run(
+        %{"in" => src},
+        %{"columns" => ["a", "b", "c"], "method" => "mean"},
+        ctx
+      )
+
+      assert infos(ctx) == [
+               ~s(Filled 2 values in "a" with the mean, 2.0.),
+               ~s(Filled 1 value in "b" with the mean, 4.0.),
+               ~s(No values to fill in "c".)
+             ]
+
+      assert warnings(ctx) == []
+    end
+
+    test "Imputation warns when a column has nothing to fill from", %{ctx: ctx} do
+      src = Table.sql(ctx.db, "src", "SELECT * FROM (VALUES (NULL::INTEGER), (NULL)) t(a)")
+      Tools.Imputation.run(%{"in" => src}, %{"columns" => ["a"], "method" => "median"}, ctx)
+
+      assert [warning] = warnings(ctx)
+
+      assert warning =~
+               ~s(Column "a" has no values to take the median of, so its 2 missing values stay empty.)
+    end
+
+    test "Auto Field says the type it chose for each column", %{ctx: ctx} do
+      src =
+        Table.new(ctx.db, "src", id: ["1", "2"], code: ["02134", "1"], when: ["2024-01-02", ""])
+
+      Tools.AutoField.run(%{"in" => src}, %{}, ctx)
+
+      assert infos(ctx) == [~s(Chose types: "id" BIGINT, "code" VARCHAR, "when" DATE.)]
+      assert warnings(ctx) == []
+    end
+
+    test "Fuzzy Match warns when it will compare many pairs", %{ctx: ctx} do
+      a = Table.sql(ctx.db, "a", "SELECT 'v' || i AS name FROM range(3200) r(i)")
+      b = Table.sql(ctx.db, "b", "SELECT 'w' || i AS name FROM range(3200) r(i)")
+
+      Tools.FuzzyMatch.run(
+        %{"in" => a, "match" => b},
+        %{"field" => "name", "threshold" => 100},
+        ctx
+      )
+
+      assert [warning] = warnings(ctx)
+      assert warning =~ "Comparing 10,240,000 pairs of records is slow."
+      assert warning =~ "Filter the inputs first"
+    end
+
+    test "Fuzzy Match on a few records has no warnings", %{ctx: ctx} do
+      a = Table.new(ctx.db, "a", name: ["Ada", "Adah", "Bob"])
+      Tools.FuzzyMatch.run(%{"in" => a}, %{"field" => "name"}, ctx)
+      assert warnings(ctx) == []
+    end
+
+    test "Generate Rows hitting its cap is an error the run reports" do
+      {:ok, spec} =
+        IxpipeCore.Spec.parse("""
+        nodes:
+          - {id: g, tool: generate_rows, config: {name: n, init: '1', condition: 'n > 0', loop: 'n + 1', max_rows: 10}}
+        """)
+
+      run = IxpipeCore.execute(spec)
+      assert run.nodes == %{"g" => :failed}
+      assert [%{level: :error, text: text}] = IxpipeCore.Run.messages(run, :error)
+      assert text =~ "The loop reached 10 rows and its condition still held."
+      assert text =~ "raise Most rows per loop"
+    end
+  end
+
+  describe "DateTime" do
+    test "warns how many values couldn't be parsed, as well as sending them to failed",
+         %{ctx: ctx} do
+      src = Table.new(ctx.db, "src", id: [1, 2, 3, 4], d: ["01/02/2024", "31/02/2024", nil, "x"])
+
+      %{"failed" => failed} =
+        Tools.DateTime.run(%{"in" => src}, %{"column" => "d", "format" => "dd/MM/yyyy"}, ctx)
+
+      assert Table.count(failed) == 2
+      assert [warning] = warnings(ctx)
+
+      assert warning =~
+               ~s|2 values of "d" couldn't be parsed as dd/MM/yyyy and are empty ("31/02/2024").|
+
+      assert warning =~ "failed output"
+    end
+
+    test "warns about values that aren't dates to format", %{ctx: ctx} do
+      src = Table.new(ctx.db, "src", d: ["2024-01-02", "soon"])
+
+      Tools.DateTime.run(
+        %{"in" => src},
+        %{"column" => "d", "convert" => "format", "format" => "dd/MM/yyyy"},
+        ctx
+      )
+
+      assert [warning] = warnings(ctx)
+      assert warning =~ ~s|1 value of "d" couldn't be read as a date and is empty ("soon").|
+    end
+
+    test "every value parsed: no warning", %{ctx: ctx} do
+      src = Table.new(ctx.db, "src", d: ["2024-01-02", nil])
+      Tools.DateTime.run(%{"in" => src}, %{"column" => "d", "format" => "yyyy-MM-dd"}, ctx)
+      assert warnings(ctx) == []
+    end
+  end
+
+  describe "Multi-row and Multi-field errors read well" do
+    defp error(fun) do
+      fun.()
+      flunk("expected an error")
+    rescue
+      e in RuntimeError -> IxpipeCore.Errors.humanize(Exception.message(e))
+    end
+
+    setup %{ctx: ctx} do
+      %{t: Table.new(ctx.db, "src", a: [1, 2], name: ["x", "y"])}
+    end
+
+    test "a row reference to a missing column", %{t: t, ctx: ctx} do
+      text =
+        error(fn ->
+          Tools.MultiRowFormula.run(%{"in" => t}, %{"as" => "x", "expr" => "[Row-1:nope]"}, ctx)
+        end)
+
+      assert text == ~s(Column "nope" in [Row-1:nope] isn't in the input. Check its spelling.)
+    end
+
+    test "a plain missing column doesn't offer the tool's own row number", %{t: t, ctx: ctx} do
+      text =
+        error(fn ->
+          Tools.MultiRowFormula.run(
+            %{"in" => t},
+            %{"as" => "x", "expr" => "nope + [Row-1:a]"},
+            ctx
+          )
+        end)
+
+      assert text =~ ~s(Column "nope" isn't in the input.)
+      refute text =~ "__ixpipe"
+    end
+
+    test "a multi-field formula on columns it can't apply to", %{t: t, ctx: ctx} do
+      text =
+        error(fn ->
+          Tools.MultiFieldFormula.run(%{"in" => t}, %{"expr" => "_current_ * 2"}, ctx)
+        end)
+
+      assert text =~ "* can't take values of types VARCHAR, INTEGER."
+      assert text =~ "CAST(column AS DOUBLE)"
+    end
+
+    test "a missing multi-field column", %{t: t, ctx: ctx} do
+      text =
+        error(fn ->
+          Tools.MultiFieldFormula.run(
+            %{"in" => t},
+            %{"columns" => ["nope"], "expr" => "_current_"},
+            ctx
+          )
+        end)
+
+      assert text == ~s(Column "nope" isn't in the input. Check its spelling.)
     end
   end
 end

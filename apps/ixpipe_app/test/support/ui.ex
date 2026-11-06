@@ -32,7 +32,8 @@ defmodule IxpipeApp.UI do
     "Join tab",
     "Parse tab",
     "Transform tab",
-    "Code tab"
+    "Code tab",
+    "Macros tab"
   ]
 
   @doc "Adds `tool` from the ribbon tab that holds it, as a user would."

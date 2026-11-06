@@ -7,7 +7,7 @@ defmodule IxpipeCore do
 
   require Runic
   alias Runic.Workflow
-  alias IxpipeCore.{Context, Duck, Errors, Message, Run, Spec, Table}
+  alias IxpipeCore.{Context, Duck, Errors, Macro, Message, Run, Spec, Table}
 
   @doc """
   Runs every node of `spec` in a fresh DuckDB database, returning each
@@ -15,9 +15,16 @@ defmodule IxpipeCore do
   `node.output` for each output of a tool with several. The tables live as
   long as a result references the database. When a node fails, the run
   fails with the first (in workflow order) and its raw error; `execute/2`
-  keeps what did run, and every node's messages.
+  keeps what did run, and every node's messages. Disabled tools and
+  everything downstream of them (`Spec.skipped/1`) are skipped: they have
+  no results.
 
-  Options: `:settings`, DuckDB `SET` options such as `memory_limit`.
+  A macro run on its own takes its parameters' defaults, or `:params`.
+  A failure inside a macro node fails that node, naming the inner tool
+  (`m/f failed: …`).
+
+  Options: `:settings`, DuckDB `SET` options such as `memory_limit`;
+  `:params`, values for a macro workflow's parameters by name.
   """
   @spec run(Spec.t(), keyword()) ::
           {:ok, %{String.t() => Table.t()}}
@@ -41,18 +48,28 @@ defmodule IxpipeCore do
   warnings, and why it failed, in "what happened. what to do." form with
   DuckDB's raw error as the detail).
 
-  Options as `run/2`.
+  Options as `run/2`, and for a macro's inner run: `:db`, the database to
+  run in (instead of a fresh one), and `:prefix`, which names the run's
+  tables and messages (`m/` for the inner nodes of macro node `m`). `tables`
+  and `nodes` stay keyed by the spec's own ids.
   """
   @spec execute(Spec.t(), keyword()) :: Run.t()
   def execute(%Spec{} = spec, opts \\ []) do
     started = System.monotonic_time(:millisecond)
-    {:ok, db} = Duck.open(Keyword.get(opts, :settings, []))
+    prefix = Keyword.get(opts, :prefix, "")
+    db = Keyword.get_lazy(opts, :db, fn -> open!(opts) end)
+    # A macro run on its own binds its parameters; an inner run's spec
+    # already holds the node's values.
+    spec = if prefix == "", do: Macro.bind(spec, Keyword.get(opts, :params, %{})), else: spec
     log = Context.new_log()
+    disabled = Spec.skipped(spec)
 
     try do
+      skip_disabled(spec, disabled, %Context{db: db, id: nil, log: log})
+
       produced =
-        spec
-        |> to_runic(db, log)
+        %{spec | nodes: Enum.reject(spec.nodes, &(&1.id in disabled))}
+        |> to_runic(db, log, prefix)
         |> Workflow.react_until_satisfied(:run)
         |> Workflow.raw_productions_by_component()
         |> Map.new(fn {id, [value | _]} -> {id, value} end)
@@ -90,6 +107,7 @@ defmodule IxpipeCore do
         status: if(Enum.any?(Map.values(nodes), &(&1 == :failed)), do: :failed, else: :ok),
         nodes: nodes,
         tables: tables,
+        disabled: disabled,
         messages: messages,
         ms: System.monotonic_time(:millisecond) - started
       }
@@ -98,14 +116,64 @@ defmodule IxpipeCore do
     end
   end
 
-  @doc "Compiles `spec` into a Runic workflow with one step per node, working in `db`."
-  @spec to_runic(Spec.t(), Duck.db(), Context.log()) :: Workflow.t()
-  def to_runic(%Spec{} = spec, db, log \\ nil) do
-    tools = Map.new(spec.nodes, &{&1.id, &1.tool})
+  # A disabled tool, a tool in a disabled container, and everything after
+  # one: each says why it was skipped, naming the disabled tool it follows.
+  defp skip_disabled(spec, disabled, ctx) do
+    nodes = Map.new(spec.nodes, &{&1.id, &1})
+    containers = for c <- spec.containers, c.disabled, id <- c.nodes, into: %{}, do: {id, c}
+
+    for id <- disabled do
+      cause = off_cause(nodes, containers, disabled, id)
+      {reason, fix} = off_reason(nodes, containers, cause)
+
+      text =
+        if cause == id,
+          do: "Skipped: #{reason}. Enable #{if fix == id, do: "it", else: fix} and run again.",
+          else: "Skipped: after #{cause}, which is #{reason}. Enable #{fix} and run again."
+
+      Context.info(%{ctx | id: id}, text)
+    end
+  end
+
+  # The disabled tool (or tool in a disabled container) `id` follows.
+  defp off_cause(nodes, containers, disabled, id) do
+    node = nodes[id]
+
+    if node.disabled or Map.has_key?(containers, id) do
+      id
+    else
+      node.inputs
+      |> Map.values()
+      |> Enum.map(&elem(Spec.source(&1), 0))
+      |> Enum.find(&(&1 in disabled))
+      |> then(&off_cause(nodes, containers, disabled, &1))
+    end
+  end
+
+  # Why `id` is off, and what to enable.
+  defp off_reason(nodes, containers, id) do
+    if nodes[id].disabled,
+      do: {"disabled", id},
+      else:
+        {"in disabled container #{container_name(containers[id])}",
+         container_name(containers[id])}
+  end
+
+  defp container_name(%{title: title, id: id}), do: if(title in [nil, ""], do: id, else: title)
+
+  @doc """
+  Compiles `spec` into a Runic workflow with one step per node, working in
+  `db` and recording messages in `log`. Each node's tables (and messages)
+  are named for `prefix` and its id: a macro's inner nodes run under
+  `node/`.
+  """
+  @spec to_runic(Spec.t(), Duck.db(), Context.log(), String.t()) :: Workflow.t()
+  def to_runic(%Spec{} = spec, db, log \\ nil, prefix \\ "") do
+    nodes = Map.new(spec.nodes, &{&1.id, &1})
 
     Enum.reduce(spec.nodes, Runic.workflow(name: spec.name || "ixpipe"), fn node, wrk ->
       # Only the connected ports: an optional one may be left open.
-      ports = Enum.filter(node.tool.inputs(), &Map.has_key?(node.inputs, &1))
+      ports = Enum.filter(IxpipeCore.Tools.inputs(node), &Map.has_key?(node.inputs, &1))
       sources = Enum.map(ports, &Spec.source(node.inputs[&1]))
       # A Runic join never fires on a repeated parent, so each parent node
       # feeds the step once; `slots` maps every port to its parent's
@@ -115,12 +183,26 @@ defmodule IxpipeCore do
       slots =
         for {port, {from, output}} <- Enum.zip(ports, sources) do
           index = Enum.find_index(unique, &(&1 == from))
-          {port, index, output || hd(IxpipeCore.Tools.outputs(tools[from]))}
+          {port, index, output || hd(IxpipeCore.Tools.outputs(nodes[from]))}
         end
 
-      ctx = %Context{db: db, id: node.id, log: log}
+      ctx = %Context{db: db, id: prefix <> node.id, log: log}
+      # A macro node's tool runs the macro it loaded.
+      node =
+        if node.macro,
+          do: %{node | config: Map.put(node.config, "_macro", node.macro)},
+          else: node
+
       Workflow.add(wrk, step(node, ctx, slots, length(unique)), add_opts(unique))
     end)
+  end
+
+  defp tables(%Table{} = table), do: [table]
+  defp tables(outputs) when is_map(outputs), do: Map.values(outputs)
+
+  defp open!(opts) do
+    {:ok, db} = Duck.open(Keyword.get(opts, :settings, []))
+    db
   end
 
   defp flatten(id, %Table{} = table), do: [{id, table}]
@@ -134,7 +216,10 @@ defmodule IxpipeCore do
 
   # Runic hashes a step from its fn and bound variables, so `id` sits inside
   # each fn: nodes with the same tool and config stay distinct steps.
-  defp step(%{id: id, tool: tool, config: config}, ctx, slots, arity) do
+  defp step(%{id: id, config: config} = node, ctx, slots, arity) do
+    # The tool with its node's outputs, in order, for the rows message.
+    tool = {node.tool, IxpipeCore.Tools.outputs(node)}
+
     case arity do
       0 ->
         Runic.step(fn _ -> run_tool(ctx, tool, inputs(slots, []), config) end, name: id)
@@ -171,7 +256,12 @@ defmodule IxpipeCore do
   # nodes below it are skipped, naming the node that failed, and the other
   # branches run on.
   @doc false
-  def run_tool(%Context{id: id} = ctx, tool, inputs, config) do
+  def run_tool(ctx, tool, inputs, config)
+
+  def run_tool(ctx, tool, inputs, config) when is_atom(tool),
+    do: run_tool(ctx, {tool, IxpipeCore.Tools.outputs(tool)}, inputs, config)
+
+  def run_tool(%Context{id: id} = ctx, {tool, outputs}, inputs, config) do
     case Enum.find_value(Map.values(inputs), &cause/1) do
       nil ->
         started = System.monotonic_time(:millisecond)
@@ -179,10 +269,21 @@ defmodule IxpipeCore do
         try do
           result = tool.run(inputs, config, ctx)
           ms = System.monotonic_time(:millisecond) - started
-          Context.info(ctx, "#{rows(tool, result)} in #{ms} ms")
+          # A table's own warnings (Select's failed casts) are the node's.
+          for %Table{warnings: warnings} <- tables(result),
+              text <- warnings,
+              do: Context.warn(ctx, text)
+
+          Context.info(ctx, "#{rows(outputs, result)} in #{ms} ms")
           result
         rescue
-          e -> failed(ctx, Exception.message(e))
+          # A macro's inner tool failed: its message, naming that tool.
+          e in Macro.Failed ->
+            Context.record(ctx, :error, e.text, e.detail)
+            {:failed, id, e.detail}
+
+          e ->
+            failed(ctx, Exception.message(e))
         catch
           kind, reason -> failed(ctx, Exception.format_banner(kind, reason))
         end
@@ -202,10 +303,10 @@ defmodule IxpipeCore do
     {:failed, id, raw}
   end
 
-  defp rows(_tool, %Table{} = table), do: plural(Table.count(table), "row")
+  defp rows(_names, %Table{} = table), do: plural(Table.count(table), "row")
 
-  defp rows(tool, outputs) when is_map(outputs) do
-    IxpipeCore.Tools.outputs(tool)
+  defp rows(names, outputs) when is_map(outputs) do
+    names
     |> Enum.filter(&Map.has_key?(outputs, &1))
     |> Enum.map_join(", ", &"#{&1} #{plural(Table.count(outputs[&1]), "row")}")
   end

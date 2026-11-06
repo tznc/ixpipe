@@ -2,7 +2,19 @@ defmodule IxpipeCore.ToolsTest do
   use ExUnit.Case, async: true
   alias IxpipeCore.Tools
 
-  @types [:string, :path, :list, :bool, :choice, :integer, :expr, :code, :formulas, :aggregates]
+  @types [
+    :string,
+    :path,
+    :list,
+    :bool,
+    :choice,
+    :integer,
+    :expr,
+    :code,
+    :formulas,
+    :aggregates,
+    :select
+  ]
 
   test "lookup/1 and name/1 are inverses" do
     assert Tools.lookup("sort") == Tools.Sort

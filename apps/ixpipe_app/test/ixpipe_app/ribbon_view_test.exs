@@ -12,7 +12,8 @@ defmodule IxpipeApp.RibbonViewTest do
     "Join tab",
     "Parse tab",
     "Transform tab",
-    "Code tab"
+    "Code tab",
+    "Macros tab"
   ]
 
   setup do
@@ -62,20 +63,16 @@ defmodule IxpipeApp.RibbonViewTest do
         commands(w)
       end)
 
-    assert Enum.sort(added) == Enum.map(IxpipeCore.Tools.names(), &"Add #{&1}")
+    # A macro is not added from a button but picked: "Use a macro".
+    assert Enum.sort(added) == Enum.map(IxpipeCore.Tools.names() -- ["macro"], &"Add #{&1}")
+    Test.click(w, "Macros tab")
+    assert [%{"a" => %{"phx-pick-file" => "use_macro"}}] = UI.find(w, "Use a macro")
   end
 
   test "the everyday tools sit in Preparation, Join and Transform, humanised", %{w: w} do
     Test.click(w, "Preparation tab")
-    assert attrs(w, "Sequence")["role"] == "group"
 
-    for label <- [
-          "Record ID",
-          "Tile",
-          "Generate rows",
-          "Imputation",
-          "Auto field"
-        ],
+    for label <- ["Imputation", "Auto field"],
         do: assert(Test.text(w) =~ label, label)
 
     Test.click(w, "Join tab")
@@ -84,9 +81,13 @@ defmodule IxpipeApp.RibbonViewTest do
     for label <- ["Find replace", "Append fields", "Join multiple", "Fuzzy match"],
         do: assert(Test.text(w) =~ label, label)
 
-    # With Summarize, as Alteryx's Transform has it.
+    # Running total with Summarize, as Alteryx's Transform has it; Sequence
+    # beside it so Preparation's Columns, Formula and Rows fit a desktop window.
     Test.click(w, "Transform tab")
-    assert Test.text(w) =~ "Running total"
+    assert attrs(w, "Sequence")["role"] == "group"
+
+    for label <- ["Running total", "Record ID", "Tile", "Generate rows"],
+        do: assert(Test.text(w) =~ label, label)
   end
 
   test "a tool added from a tab lands on the canvas", %{w: w, pid: pid} do
@@ -132,7 +133,7 @@ defmodule IxpipeApp.RibbonViewTest do
         for label <- commands(w), do: {label, Test.icons(w, label)}
       end)
 
-    assert length(icons) == length(IxpipeCore.Tools.names())
+    assert length(icons) == length(IxpipeCore.Tools.names() -- ["macro"])
     for {label, names} <- icons, do: assert([_] = names, label)
 
     # Inputs and outputs share a format's icon; every other tool has its own.
@@ -142,4 +143,25 @@ defmodule IxpipeApp.RibbonViewTest do
 
     assert by_tool |> Enum.uniq() |> Enum.map(&elem(&1, 1)) |> then(&(&1 == Enum.uniq(&1)))
   end
+
+  # Too many for one row at 1200px: files above, databases below, as an
+  # Access ribbon stacks small commands.
+  test "the In/Out groups stack files over databases", %{w: w} do
+    Test.click(w, "In/Out tab")
+
+    for group <- ["Input", "Output"] do
+      rows =
+        for %{"a" => %{"data-row" => _}} = row <- descendants(hd(UI.find(w, group))),
+            do: for(%{"a" => %{"aria-label" => "Add " <> tool}} <- descendants(row), do: tool)
+
+      prefix = String.downcase(group) <> "_"
+
+      assert [files, databases] = rows
+      assert (prefix <> "csv") in files and (prefix <> "json") in files
+      assert (prefix <> "postgres") in databases and (prefix <> "sqlserver") in databases
+    end
+  end
+
+  defp descendants(%{"c" => children}), do: Enum.flat_map(children, &[&1 | descendants(&1)])
+  defp descendants(_), do: []
 end

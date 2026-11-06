@@ -24,3 +24,4 @@ erl_crash.dump
 /.claude/worktrees/
 /apps/ixpipe_core/priv/native/
 /apps/ixpipe_core/native/*/target/
+__pycache__/

@@ -106,7 +106,9 @@ defmodule IxpipeApp.Components do
   The ribbon (as in ixtable, after Access): a row of tabs over the selected
   tab's labelled command groups (`ribbon_group/1`). Tabs are labelled
   "<Label> tab" and send `event` with `phx-value-tab`. Both rows scroll
-  sideways when the window is too narrow for them.
+  sideways when the window is too narrow for them. On a desktop the
+  commands keep room for two rows of buttons on every tab, so switching
+  tabs never moves the canvas.
   """
   def ribbon(assigns) do
     ~H"""
@@ -116,7 +118,7 @@ defmodule IxpipeApp.Components do
           aria-label={"#{label} tab"} phx-click={@event} phx-value-tab={key}
           class={"#{tab_size(@touch)} rounded-md cursor-pointer text-xs " <> tab_look(key == @selected)}>{label}</button>
       </div>
-      <div class="flex-row items-stretch px-2 py-1 overflow-x-auto">{render_slot(@inner_block)}</div>
+      <div class={"flex-row items-stretch px-2 py-1 overflow-x-auto" <> if(@touch, do: "", else: " min-h-[90px]")}>{render_slot(@inner_block)}</div>
       <div class="h-px w-full bg-border" />
     </div>
     """
@@ -218,9 +220,9 @@ defmodule IxpipeApp.Components do
     ~H"""
     <div data-callout={@tone}
       class={"flex-row items-start gap-2 p-3 rounded-md border border-#{@colour} bg-#{@colour}/12 #{@class}"}>
-      <div class={"size-2 mt-1 rounded-full bg-#{@colour} shrink-0"} />
-      <%!-- Takes the rest of the row, so long text wraps inside the callout. --%>
-      <div class="flex-col gap-1 flex-1 min-w-0">
+      <div class={"size-2 mt-1 shrink-0 rounded-full bg-#{@colour}"} />
+      <%!-- Takes the rest of the width, so a long line wraps. --%>
+      <div class="flex-1 min-w-0 flex-col gap-1">
         <text class="text-sm font-semibold text-foreground">{@title}</text>
         <text :if={@inner_block != []} class="text-sm text-foreground">{render_slot(@inner_block)}</text>
       </div>

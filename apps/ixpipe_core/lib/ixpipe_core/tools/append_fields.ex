@@ -7,11 +7,10 @@ defmodule IxpipeCore.Tools.AppendFields do
 
   Config, optional: `limit` (default 16) and `too_many`, what happens when
   `source` has more rows than `limit`: `error` (default), `warn` (append
-  them and log a warning) or `allow`.
+  them and record a warning) or `allow`.
   """
   @behaviour IxpipeCore.Tool
 
-  require Logger
   alias IxpipeCore.{Context, Table}
   import IxpipeCore.Duck, only: [ident: 1]
 
@@ -51,7 +50,7 @@ defmodule IxpipeCore.Tools.AppendFields do
 
       case config["too_many"] || "error" do
         "error" -> raise message
-        "warn" -> Logger.warning("#{ctx.id}: #{message}")
+        "warn" -> Context.warn(ctx, message)
         _ -> :ok
       end
     end

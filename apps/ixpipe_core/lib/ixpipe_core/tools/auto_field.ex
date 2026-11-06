@@ -6,7 +6,8 @@ defmodule IxpipeCore.Tools.AutoField do
   Blank values become null and fit any type; a column of only blanks stays
   VARCHAR, as does a numeric-looking one with a leading zero (`02134`), so
   codes keep their digits. Config: optional `columns` (default every
-  VARCHAR column); other columns pass through unchanged.
+  VARCHAR column); other columns pass through unchanged. It reports the
+  type it chose for each column as info.
   """
   @behaviour IxpipeCore.Tool
 
@@ -42,6 +43,11 @@ defmodule IxpipeCore.Tools.AutoField do
 
       _ ->
         fits = fits(t, columns)
+
+        Context.info(
+          ctx,
+          "Chose types: " <> Enum.map_join(columns, ", ", &~s("#{&1}" #{fits[&1]})) <> "."
+        )
 
         casts =
           for c <- columns, type = fits[c], type != "VARCHAR" do

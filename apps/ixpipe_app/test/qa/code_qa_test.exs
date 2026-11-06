@@ -11,6 +11,8 @@ defmodule IxpipeApp.QA.CodeTest do
 
   setup do
     qa = QA.launch!(open: "sales.yaml")
+    # Room beside the sales workflow's cards for the tools these tests add.
+    :ok = Playwright.resize(qa.page, 1600, 1000)
     on_exit(fn -> QA.stop(qa) end)
     qa
   end

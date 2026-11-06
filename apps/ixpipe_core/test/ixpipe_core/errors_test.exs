@@ -10,14 +10,6 @@ defmodule IxpipeCore.ErrorsTest do
     message
   end
 
-  test "a tool's own what-happened-what-to-do message stays as it is, without its detail" do
-    raw =
-      "Python raised ZeroDivisionError on line 2: division by zero. Fix the script and run again.\n\nTraceback (most recent call last):"
-
-    assert IxpipeCore.Errors.humanize(raw) ==
-             "Python raised ZeroDivisionError on line 2: division by zero. Fix the script and run again."
-  end
-
   test "a missing column names it and the columns there are" do
     raw = duck_error("SELECT nope FROM (SELECT 1 AS a, 2 AS b)")
     text = Errors.humanize(raw)
@@ -73,5 +65,35 @@ defmodule IxpipeCore.ErrorsTest do
 
     assert Errors.humanize("something odd") ==
              "something odd. Check the tool's settings and run again."
+  end
+
+  test "a tool's own message, already what happened and what to do, stays as it is" do
+    text = ~s(Column "nope" isn't in the input. Check its spelling.)
+    assert Errors.humanize(text) == text
+  end
+
+  test "candidates leave out ixpipe's own columns" do
+    raw = duck_error("SELECT nope FROM (SELECT 1 AS a, 2 AS __ixpipe_row)")
+    refute Errors.humanize(raw) =~ "__ixpipe"
+  end
+
+  test "an operator on a type it doesn't take" do
+    text = Errors.humanize(duck_error("SELECT 'a'::VARCHAR * 2"))
+
+    assert text ==
+             "* can't take values of types VARCHAR, INTEGER. " <>
+               "Choose columns of a type it takes, or cast them, e.g. CAST(column AS DOUBLE)."
+  end
+
+  test "a message that already says what to do is kept" do
+    raw =
+      IxpipeCore.Cloud.extension_error("httpfs", "IO Error: Failed to download extension")
+
+    assert Errors.humanize(raw) == raw
+
+    assert Errors.humanize(
+             "Postgres: couldn't connect to db:5432. Check the connection's host, port and credentials"
+           ) ==
+             "Postgres: couldn't connect to db:5432. Check the connection's host, port and credentials."
   end
 end
