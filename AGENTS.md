@@ -13,7 +13,7 @@ desktop and mobile app in Elixir, rendered by GPUI through
   - `IxpipeCore.execute/2` runs as Alteryx does and returns an `IxpipeCore.Run`: each node's status (ok, failed, skipped below a failure), the tables of every node that ran, and per-node `IxpipeCore.Message`s (info: rows and time; warnings; errors in "what happened. what to do." form via `IxpipeCore.Errors.humanize/1`, the raw DuckDB text as `detail`). `run/2` wraps it as `{:ok, tables}` or the first `{:node_failed, …}`. Tools record warnings with `Context.warn/2` and info with `Context.info/2` (safe across Runic's concurrent steps).
   - Tools (`IxpipeCore.Tools.*`) implement `IxpipeCore.Tool` over tables: `inputs/0`, `fields/0` (the settings schema the properties panel renders; `IxpipeCore.Config` parses and formats each type) and `run/3` (`inputs, config, %IxpipeCore.Context{}`), mostly SQL through `Context.sql/3`. Expressions in Filter and Formula are DuckDB SQL. Register new ones in `IxpipeCore.Tools` and in a ribbon group (`@ribbon`) in `MainView`; a test checks every tool is on exactly one tab.
 - `apps/ixpipe_app`: the Baguette UI. `IxpipeApp.MainView` is the main window: home (workflows in `IXPIPE_HOME`, default `~/ixpipe`) and the canvas (ribbon, scrolling canvas with curved wires, properties panel driven by each tool's `fields/0`, results grid of the selected tool's first 50 rows after a run). `IxpipeApp.Theme` holds the colour tokens; every colour class must resolve to one (tested).
-  - Rust is only for NIFs: platform glue, `IxpipeCore.Duck` (`apps/ixpipe_core/native/ixpipe_duckdb`, duckdb-rs `~1.20000` = DuckDB v2.0.0) and `IxpipeCore.Sqlite` (`native/ixpipe_sqlite`, rusqlite bundled). Never compile DuckDB: the NIF links a prebuilt `libduckdb` that ships beside it in `priv/native` (rpath `$ORIGIN`). Desktop builds download DuckDB's official library (libduckdb-sys's `download-lib`); Android links the one CI publishes as a release asset.
+  - Rust is only for NIFs: platform glue, `IxpipeCore.Duck` (`apps/ixpipe_core/native/ixpipe_duckdb`, duckdb-rs `~1.20000` = DuckDB v2.0.0) and `IxpipeCore.Sqlite` (`native/ixpipe_sqlite`, rusqlite bundled). Never compile DuckDB: the NIF links a prebuilt `libduckdb` that ships beside it in `priv/native` (rpath `$ORIGIN`). Desktop builds download DuckDB's official library (libduckdb-sys's `download-lib`); Android links ours: `libduckdb-android.yml` builds it once per DuckDB version with the NDK and publishes it as the release `libduckdb-v2.0.0`; `mix.exs` downloads it (`scripts/android-libduckdb.sh`, checked against `scripts/libduckdb-android.sha256`) and the APK ships it as `lib/<abi>/libduckdb.so` beside the NIF. A new DuckDB version: bump the workflow, run it, update the checksums.
 
 ## Rules
 
@@ -26,7 +26,7 @@ desktop and mobile app in Elixir, rendered by GPUI through
 - Never create atoms from workflow input. Ports, ids and config keys stay strings.
 - Runic hashes steps by their fn plus bound variables, so build step fns inline (see `IxpipeCore.step/2`). A fn passed in as a variable gets the same hash for every node.
 - When recommending actions, give options A/B/C plus a recommendation. Ask when something is ambiguous.
-- No PRs unless asked. PR descriptions are 1-2 lines plus the session link.
+- Never push to `main`: every change lands through a PR from a `claude/` branch. PR descriptions are 1-2 lines plus the session link.
 
 ## Design language
 
