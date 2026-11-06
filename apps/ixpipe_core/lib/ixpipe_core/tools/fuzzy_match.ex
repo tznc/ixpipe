@@ -13,7 +13,7 @@ defmodule IxpipeCore.Tools.FuzzyMatch do
   groups pairs that connect through shared records.
 
   Every pair is compared, so time grows with the product of the inputs'
-  row counts.
+  row counts: above 10 million pairs the node warns.
   """
   @behaviour IxpipeCore.Tool
 
@@ -83,15 +83,18 @@ defmodule IxpipeCore.Tools.FuzzyMatch do
         _ -> {side.(t), "a.__rid < b.__rid", "0:"}
       end
 
+    warn_if_slow(ctx, t, inputs["match"], field)
+
     score = "round(100 * #{similarity(config["method"], "lower(a.value)", "lower(b.value)")}, 1)"
 
+    # Prefixed, so the CTEs don't shadow an input table (named for its node).
     pairs = """
-    WITH RECURSIVE a AS (#{side.(t)}), b AS (#{b}),
-    pairs AS (
+    WITH RECURSIVE __fm_a AS (#{side.(t)}), __fm_b AS (#{b}),
+    __fm_pairs AS (
       SELECT * FROM (
         SELECT a.id, b.id AS match_id, a.value, b.value AS match_value, #{score} AS score,
           a.__rid AS __a, b.__rid AS __b
-        FROM a JOIN b ON #{pair}
+        FROM __fm_a a JOIN __fm_b b ON #{pair}
       ) WHERE score >= #{threshold}
     )
     """
@@ -101,8 +104,39 @@ defmodule IxpipeCore.Tools.FuzzyMatch do
       else:
         Context.sql(
           ctx,
-          pairs <> "SELECT * EXCLUDE (__a, __b) FROM pairs ORDER BY id, match_id"
+          pairs <> "SELECT * EXCLUDE (__a, __b) FROM __fm_pairs ORDER BY id, match_id"
         )
+  end
+
+  # Above this many pairs a run takes long enough to notice.
+  @slow_pairs 10_000_000
+
+  defp warn_if_slow(ctx, t, match, field) do
+    present = fn table ->
+      %{rows: [[n]]} =
+        Table.query!(table.db, "SELECT count(#{ident(field)}) FROM #{Table.ref(table)}")
+
+      n
+    end
+
+    n = present.(t)
+    pairs = if match, do: n * present.(match), else: div(n * (n - 1), 2)
+
+    if pairs > @slow_pairs,
+      do:
+        Context.warn(
+          ctx,
+          "Comparing #{delimit(pairs)} pairs of records is slow. " <>
+            "Filter the inputs first, or match fewer records at a time."
+        )
+  end
+
+  defp delimit(n) do
+    n
+    |> Integer.to_string()
+    |> String.reverse()
+    |> String.replace(~r/(\d{3})(?=\d)/, "\\1,")
+    |> String.reverse()
   end
 
   defp similarity(method, x, y) do
@@ -120,16 +154,16 @@ defmodule IxpipeCore.Tools.FuzzyMatch do
     key = fn side, col -> "'#{side}' || lpad(#{col}::VARCHAR, 20, '0')" end
 
     """
-    , edges AS (SELECT #{key.("0:", "__a")} AS x, #{key.(b_key, "__b")} AS y FROM pairs),
-    links AS (SELECT x, y FROM edges UNION SELECT y, x FROM edges),
-    reach(node, root) AS (
-      SELECT x, x FROM links
+    , __fm_edges AS (SELECT #{key.("0:", "__a")} AS x, #{key.(b_key, "__b")} AS y FROM __fm_pairs),
+    __fm_links AS (SELECT x, y FROM __fm_edges UNION SELECT y, x FROM __fm_edges),
+    __fm_reach(node, root) AS (
+      SELECT x, x FROM __fm_links
       UNION
-      SELECT links.y, reach.root FROM reach JOIN links ON links.x = reach.node
+      SELECT l.y, r.root FROM __fm_reach r JOIN __fm_links l ON l.x = r.node
     ),
-    roots AS (SELECT node, min(root) AS root FROM reach GROUP BY node)
+    __fm_roots AS (SELECT node, min(root) AS root FROM __fm_reach GROUP BY node)
     SELECT p.* EXCLUDE (__a, __b), dense_rank() OVER (ORDER BY r.root) AS cluster
-    FROM pairs p JOIN roots r ON r.node = #{key.("0:", "p.__a")}
+    FROM __fm_pairs p JOIN __fm_roots r ON r.node = #{key.("0:", "p.__a")}
     ORDER BY p.id, p.match_id
     """
   end
