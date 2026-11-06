@@ -77,6 +77,11 @@ defmodule IxpipeCore.Errors do
       own?(raw) ->
         raw
 
+      # Already "what happened. what to do." (a tool's own message, such as
+      # a connection or extension error): kept as it is.
+      strip_kind(first) == first and first =~ ~r/[.!?)] +[A-Z]/ ->
+        sentence(first)
+
       true ->
         sentence(strip_kind(first)) <> " " <> @generic
     end

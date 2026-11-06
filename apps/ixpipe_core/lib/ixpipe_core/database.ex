@@ -28,8 +28,8 @@ defmodule IxpipeCore.Database do
 
   @doc """
   The node's table from column names and row lists, values converted for
-  DuckDB. With `uuids: true` (Postgres), 16-byte binaries are UUIDs shown as
-  text. SQLite types values, not columns, so a column of integers and reals
+  DuckDB. With `uuids: "postgres"` or `"sqlserver"`, 16-byte binaries are
+  UUIDs (in that server's byte order) shown as text. SQLite types values, not columns, so a column of integers and reals
   becomes DOUBLE and any other mix VARCHAR.
   """
   def table(ctx, columns, rows, opts \\ [])
@@ -73,9 +73,21 @@ defmodule IxpipeCore.Database do
   defp value(%NaiveDateTime{} = dt, _uuids), do: dt
   defp value(%Date{} = d, _uuids), do: d
   defp value(%Time{} = t, _uuids), do: Time.to_string(t)
-  defp value(<<_::128>> = bin, true), do: uuid(bin)
+  # Text that happens to be 16 bytes long stays text.
+  defp value(<<_::128>> = bin, kind) when kind in ["postgres", "sqlserver"] do
+    cond do
+      String.printable?(bin) -> bin
+      kind == "postgres" -> uuid(bin)
+      true -> sqlserver_uuid(bin)
+    end
+  end
+
   defp value(map, _uuids) when is_map(map) or is_list(map), do: Jason.encode!(map)
   defp value(other, _uuids), do: other
+
+  # SQL Server sends a uniqueidentifier's first three groups little-endian.
+  defp sqlserver_uuid(<<a::32-little, b::16-little, c::16-little, rest::binary>>),
+    do: uuid(<<a::32, b::16, c::16, rest::binary>>)
 
   defp uuid(<<a::32, b::16, c::16, d::16, e::48>>) do
     [{a, 8}, {b, 4}, {c, 4}, {d, 4}, {e, 12}]

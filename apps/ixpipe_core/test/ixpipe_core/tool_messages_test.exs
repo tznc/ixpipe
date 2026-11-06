@@ -36,6 +36,18 @@ defmodule IxpipeCore.ToolMessagesTest do
       assert warning =~ "Data cleansing"
     end
 
+    test "across several files, the warning names the file with the bad rows",
+         %{dir: dir, ctx: ctx} do
+      File.write!(Path.join(dir, "a.csv"), "id,amount\n1,10\n2,20\n")
+      File.write!(Path.join(dir, "b.csv"), "id,amount\n3,30\n4,40,extra,more\n5,50\n")
+
+      t = Tools.InputCsv.run(%{}, %{"path" => Path.join(dir, "*.csv")}, ctx)
+
+      assert Enum.sort(Table.to_columns(t)["id"]) == [1, 2, 3, 5]
+      assert [warning] = warnings(ctx)
+      assert warning =~ "1 row couldn't be read and was skipped (b.csv line 3"
+    end
+
     test "a clean file has no warnings", %{dir: dir, ctx: ctx} do
       path = Path.join(dir, "ok.csv")
       File.write!(path, "id,name\n1,Ada\n2,Bob\n")
@@ -88,6 +100,24 @@ defmodule IxpipeCore.ToolMessagesTest do
     assert warning =~ "2 cells couldn't be read and are empty (#DIV/0! in B2)"
   end
 
+  test "Input Excel names unreadable cells by their place in the sheet, within the range",
+       %{dir: dir, ctx: ctx} do
+    path = Path.join(dir, "range.xlsx")
+
+    sheet = %Elixlsx.Sheet{
+      name: "S",
+      rows: [["#REF!"], [], [nil, "a", "b"], [nil, 1, "#DIV/0!"], [nil, 2, 3]]
+    }
+
+    {:ok, _} = Elixlsx.write_to(%Elixlsx.Workbook{sheets: [sheet]}, String.to_charlist(path))
+
+    t = Tools.InputExcel.run(%{}, %{"path" => path, "range" => "B3:C"}, ctx)
+
+    assert Table.to_columns(t) == %{"a" => [1, 2], "b" => [nil, 3]}
+    assert [warning] = warnings(ctx)
+    assert warning =~ "1 cell couldn't be read and is empty (#DIV/0! in C4)"
+  end
+
   test "Input Excel explains a file it can't open", %{dir: dir, ctx: ctx} do
     path = Path.join(dir, "missing.xlsx")
 
@@ -102,6 +132,7 @@ defmodule IxpipeCore.ToolMessagesTest do
     for {tool, file} <- [
           {Tools.OutputCsv, "o.csv"},
           {Tools.OutputParquet, "o.parquet"},
+          {Tools.OutputJson, "o.json"},
           {Tools.OutputExcel, "o.xlsx"}
         ] do
       path = Path.join(dir, file)
