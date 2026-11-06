@@ -46,7 +46,21 @@ defmodule IxpipeCore.Tool do
   Excel tool's sheets), as quick choices beside its text box.
   """
   @callback suggestions(key :: String.t(), config :: map()) :: [String.t()]
-  @optional_callbacks outputs: 0, optional_inputs: 0, suggestions: 2
+
+  @doc """
+  For a tool whose ports and settings depend on the node (a macro, whose
+  declaration is in `node.macro`): the node's inputs, outputs and fields.
+  `IxpipeCore.Tools.inputs/1`, `outputs/1` and `fields/1` prefer them.
+  """
+  @callback inputs(IxpipeCore.Spec.Node.t()) :: [String.t()]
+  @callback outputs(IxpipeCore.Spec.Node.t()) :: [String.t()]
+  @callback fields(IxpipeCore.Spec.Node.t()) :: [field()]
+  @optional_callbacks outputs: 0,
+                      optional_inputs: 0,
+                      suggestions: 2,
+                      inputs: 1,
+                      outputs: 1,
+                      fields: 1
   @doc "The tool's settings, in the order an editor shows them."
   @callback fields() :: [field()]
   @doc """

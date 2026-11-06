@@ -2,11 +2,14 @@ defmodule IxpipeCore.CLI do
   @moduledoc """
   Headless runs, for scripts, CI and schedulers (cron, systemd timers):
 
-      ixpipe run sales.yaml [--json] [--output-dir DIR]
+      ixpipe run sales.yaml [--json] [--output-dir DIR] [--param NAME=VALUE ...]
       ixpipe validate sales.yaml
 
   Relative `path` settings resolve against the workflow's directory; with
   `--output-dir`, output tools' relative paths resolve against that instead.
+  Macros (`IxpipeCore.Macro`) resolve against the folder of the file that
+  uses them. `--param` sets a parameter of a macro workflow run on its own,
+  typed as the parameter declares.
 
   A tool that fails stops only the tools downstream of it; every tool's
   status, rows and messages (warnings and errors print under it) are
@@ -17,11 +20,12 @@ defmodule IxpipeCore.CLI do
   `bin/ixpipe-run`.
   """
 
-  alias IxpipeCore.{Run, Spec, Table, Tools}
+  alias IxpipeCore.{Config, Macro, Run, Spec, Table, Tools}
 
   @usage """
   Usage:
     ixpipe run PATH [--json] [--output-dir DIR]   run a workflow
+        [--param NAME=VALUE ...]                  set a macro workflow's parameters
     ixpipe validate PATH                          check a workflow without running it
     ixpipe help                                   show this help
 
@@ -30,7 +34,7 @@ defmodule IxpipeCore.CLI do
 
   @spec main([String.t()], IO.device()) :: non_neg_integer()
   def main(argv, io \\ :stdio) do
-    case OptionParser.parse(argv, strict: [json: :boolean, output_dir: :string]) do
+    case OptionParser.parse(argv, strict: [json: :boolean, output_dir: :string, param: :keep]) do
       {_opts, ["help"], []} ->
         IO.write(io, @usage)
         0
@@ -63,18 +67,51 @@ defmodule IxpipeCore.CLI do
   defp command("run", path, opts, io) do
     started = System.monotonic_time(:millisecond)
 
-    result =
-      with {:ok, spec} <- load(path, opts[:output_dir]),
-           :ok <- make_output_dir(opts[:output_dir]) do
-        {:ok, spec, IxpipeCore.execute(spec)}
-      end
+    with {:ok, spec} <- load(path, opts[:output_dir]),
+         {:ok, params} <- params(spec, Keyword.get_values(opts, :param), path) do
+      result =
+        with :ok <- make_output_dir(opts[:output_dir]) do
+          {:ok, spec, IxpipeCore.execute(spec, params: params)}
+        end
 
-    ms = System.monotonic_time(:millisecond) - started
-    report(result, ms, opts[:json], io)
+      ms = System.monotonic_time(:millisecond) - started
+      report(result, ms, opts[:json], io)
+    else
+      {:usage, message} -> usage(io, message)
+      error -> report(error, System.monotonic_time(:millisecond) - started, opts[:json], io)
+    end
+  end
+
+  # `--param name=value`, read with the parameter's field.
+  defp params(spec, pairs, path) do
+    fields =
+      case Macro.params(spec),
+        do: (
+          {:ok, fields} -> fields
+          _ -> []
+        )
+
+    Enum.reduce_while(pairs, {:ok, %{}}, fn pair, {:ok, acc} ->
+      with [name, text] <- String.split(pair, "=", parts: 2),
+           %{} = field <- Enum.find(fields, &(&1.key == name)),
+           {:ok, value} <- Config.parse(field, text) do
+        {:cont, {:ok, Map.put(acc, name, value)}}
+      else
+        [_] ->
+          {:halt, {:usage, "Write --param as name=value."}}
+
+        nil ->
+          {:halt,
+           {:usage, "#{Path.basename(path)} has no parameter #{hd(String.split(pair, "="))}."}}
+
+        {:error, message} ->
+          {:halt, {:usage, "#{hd(String.split(pair, "="))}: #{message}."}}
+      end
+    end)
   end
 
   defp load(path, output_dir) do
-    with {:ok, spec} <- path |> File.read!() |> Spec.decode() do
+    with {:ok, spec} <- path |> File.read!() |> Spec.decode(path: path) do
       spec |> resolve_paths(Path.dirname(Path.expand(path)), output_dir) |> Spec.validate()
     end
   end
@@ -123,7 +160,7 @@ defmodule IxpipeCore.CLI do
             )
         }
 
-        case {status, Tools.outputs(node.tool)} do
+        case {status, Tools.outputs(node)} do
           {:ok, [_]} ->
             Map.put(base, "rows", Table.count(run.tables[node.id]))
 
